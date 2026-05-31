@@ -24,8 +24,11 @@ logger = get_logger(__name__)
 
 async def _pick_targets(db: Database, project_dir: str):
     """Возвращает (список программ, общая папка) либо (None, None)."""
-    mode = await ui.ask("Поиск: [1] по service-файлам проекта (весь проект) / [2] из БД (одна программа)", "1")
-    if mode == "2":
+    mode = await ui.select("Как искать программу",
+                           ["по service-файлам проекта (весь проект)", "из БД (одна программа)"])
+    if mode is None:
+        return None, None
+    if mode == 1:
         progs = await db.list_programs()
         flt = (await ui.ask("Фильтр по имени (пусто — все)", "")).strip().lower()
         progs = [p for p in progs if not flt or flt in (p["service_name"] or "").lower()
@@ -33,15 +36,12 @@ async def _pick_targets(db: Database, project_dir: str):
         if not progs:
             print("Ничего не найдено.")
             return None, None
-        print("\nПрограммы (из programdata):")
-        for i, p in enumerate(progs, 1):
-            print(f"  [{i}] {p['service_name'] or '?':26} {'АКТИВНА' if p['status'] else 'выкл':7} "
-                  f"disp={'on' if p['dispatcher'] else 'off'}  {p['program_name'] or ''}")
-        sel = await ui.ask("Программа (номер)", "1")
-        if not (sel.isdigit() and 1 <= int(sel) <= len(progs)):
-            print("Неверный выбор.")
+        labels = [f"{p['service_name'] or '?'}  [{'АКТИВНА' if p['status'] else 'выкл'}, "
+                  f"disp={'on' if p['dispatcher'] else 'off'}]  {p['program_name'] or ''}" for p in progs]
+        idx = await ui.select("Программа для деинсталляции", labels)
+        if idx is None:
             return None, None
-        rec = progs[int(sel) - 1]
+        rec = progs[idx]
         return [rec], (rec["folder"] or "").rstrip("/")
 
     records = await db.find_programs_by_service(

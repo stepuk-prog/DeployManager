@@ -37,14 +37,11 @@ async def manage(db: Database, project_dir: str, command: str | None = None,
         print("Программы проекта не найдены в programdata.")
         return
 
-    print("\nПрограммы проекта:")
-    for i, r in enumerate(records, 1):
-        print(f"  [{i}] {r['service_name']}")
-    sel = await ui.ask("Программа (номер)", "1")
-    if not (sel.isdigit() and 1 <= int(sel) <= len(records)):
-        print("Неверный выбор программы.")
+    idx = await ui.select("Программа", [r["service_name"] for r in records])
+    if idx is None:
+        print("Программа не выбрана.")
         return
-    rec = records[int(sel) - 1]
+    rec = records[idx]
 
     bindings = await db.get_service_bindings(rec["program_id"])
     if not bindings:
@@ -63,7 +60,12 @@ async def manage(db: Database, project_dir: str, command: str | None = None,
         print("Ноды не выбраны.")
         return
 
-    command = command or await ui.ask(f"Команда {'/'.join(ALLOWED)}", "restart")
+    if not command:
+        ci = await ui.select("Команда", list(ALLOWED), default_index=ALLOWED.index("restart"))
+        if ci is None:
+            print("Команда не выбрана.")
+            return
+        command = ALLOWED[ci]
     if command not in ALLOWED:
         print(f"Команда должна быть из {ALLOWED}.")
         return

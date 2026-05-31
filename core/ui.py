@@ -70,6 +70,33 @@ async def confirm(prompt: str) -> bool:
     return _input(f"{prompt} [y/N]: ").lower() == "y"
 
 
+async def select(title: str, labels: list[str], default_index: int = 0) -> int | None:
+    """Одиночный выбор из списка → индекс (0-based) или None (отмена).
+    GUI-бэкенд → диалог; TTY → questionary.select; без TTY → ввод номера."""
+    if not labels:
+        return None
+    if _BACKEND is not None:
+        return await _BACKEND.select(title, labels, default_index)
+    if not INTERACTIVE:
+        return default_index
+    if _has_tty():
+        try:
+            import questionary
+            choices = [questionary.Choice(title=lab, value=i) for i, lab in enumerate(labels)]
+            r = await questionary.select(title, choices=choices,
+                                         default=choices[default_index]).ask_async()
+            return r if r is not None else None
+        except Exception:
+            pass
+    print(title)
+    for i, lab in enumerate(labels, 1):
+        print(f"  [{i}] {lab}")
+    raw = _input(f"Номер [{default_index + 1}]: ")
+    if not raw:
+        return default_index
+    return int(raw) - 1 if raw.isdigit() and 1 <= int(raw) <= len(labels) else None
+
+
 def _checkbox_text(title: str, labels: list[str]) -> list[int]:
     """Откат: текстовый ввод номеров (когда чек-боксы недоступны)."""
     print(title)

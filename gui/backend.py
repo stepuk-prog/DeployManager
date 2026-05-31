@@ -43,6 +43,22 @@ class FletUi:
                      ft.Button(content=ft.Text("Нет"), on_click=done(False))]))
         return await fut
 
+    async def select(self, title: str, labels: list[str], default_index: int = 0) -> int | None:
+        fut = asyncio.get_running_loop().create_future()
+
+        def choose(idx):
+            def h(_):
+                if not fut.done():
+                    fut.set_result(idx)
+                self.page.pop_dialog()
+            return h
+
+        btns = [ft.Button(content=ft.Text(lab), on_click=choose(i)) for i, lab in enumerate(labels)]
+        self.page.show_dialog(ft.AlertDialog(
+            modal=True, title=ft.Text(title),
+            content=ft.Column(btns, scroll=ft.ScrollMode.AUTO, tight=True, width=600, height=420)))
+        return await fut
+
     async def checkbox(self, title: str, labels: list[str], default_all: bool = False) -> list[int]:
         fut = asyncio.get_running_loop().create_future()
         boxes = [ft.Checkbox(label=lab, value=default_all) for lab in labels]

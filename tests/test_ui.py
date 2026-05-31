@@ -25,3 +25,14 @@ def test_checkbox_default_all_noninteractive():
 def test_checkbox_empty():
     ui.set_mode(interactive=False, assume_yes=False)
     assert _cb("t", []) == []
+
+
+def test_select_noninteractive_default():
+    ui.set_mode(interactive=False, assume_yes=False)
+    assert asyncio.run(ui.select("t", ["a", "b", "c"])) == 0
+    assert asyncio.run(ui.select("t", ["a", "b", "c"], default_index=2)) == 2
+
+
+def test_select_empty():
+    ui.set_mode(interactive=False, assume_yes=False)
+    assert asyncio.run(ui.select("t", [])) is None
