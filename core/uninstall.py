@@ -1,9 +1,11 @@
 """Деинсталляция программы с ноды — строго свои service_name (без glob, чужое не трогаем).
 
-Порядок: снять привязку в service_status (диспетчер перестаёт учитывать ноду) →
-stop/disable/rm юнита (sudo) → daemon-reload → опц. rm папки проекта. Деструктивно —
-с подтверждением; leader-нода — с жёстким предупреждением.
+Где искать цели: SSH-проба online-нод на наличие папки/юнита (ground truth — ловит и
+«хвосты» неудачного деплоя без привязки), + пометка привязки и последнего журнала.
+Порядок: снять привязку (если есть) → stop/disable/rm юнита (root) → daemon-reload →
+опц. rm папки → запись в журнал. Деструктивно; leader — с жёстким предупреждением.
 """
+import getpass
 import os
 import shlex
 
@@ -34,52 +36,78 @@ async def uninstall(ssh: SshClient, db: Database, project_dir: str, preselect: s
     rec = records[int(sel) - 1]
     unit = rec["service_name"]
     folder = (rec["folder"] or "").rstrip("/")
+    unit_etc = os.path.join(config.SYSTEMD_DIR, unit)
 
-    bindings = await db.get_service_bindings(rec["program_id"])
-    if not bindings:
-        print("У программы нет привязок к нодам — деинсталлировать нечего.")
+    nodes = await db.get_online_nodes()
+    bound = {b["node_id"]: b for b in await db.get_service_bindings(rec["program_id"])}
+
+    print(f"\nИщу '{unit}' на серверах (проба наличия)…")
+    cands = []  # (node, has_folder, has_unit)
+    for n in nodes:
+        ip = n["ip_address"]
+        has_folder = await ssh.path_exists(ip, folder) if folder else False
+        has_unit = await ssh.path_exists(ip, unit_etc)
+        if has_folder or has_unit or n["id"] in bound:
+            cands.append((n, has_folder, has_unit))
+    if not cands:
+        print("Нигде не найдено: ни папки, ни юнита, ни привязки. Удалять нечего.")
         return
-    labels = [f"{(b['server_name'] or b['ip_address']):16} [{b['status']}] running={b['running']}"
-              for b in bindings]
+
+    labels = []
+    for n, hf, hu in cands:
+        marks = []
+        if hf:
+            marks.append("папка")
+        if hu:
+            marks.append("юнит")
+        if n["id"] in bound:
+            marks.append(f"привязка:{bound[n['id']]['status']}")
+        labels.append(f"{(n['server_name'] or n['ip_address']):16} {n['ip_address']:16} "
+                      f"[{', '.join(marks)}]")
     if preselect:
-        idxs = (list(range(len(bindings))) if preselect.lower() == "all"
+        idxs = (list(range(len(cands))) if preselect.lower() == "all"
                 else [int(t) - 1 for t in preselect.replace(" ", "").split(",")
-                      if t.isdigit() and 1 <= int(t) <= len(bindings)])
+                      if t.isdigit() and 1 <= int(t) <= len(cands)])
     else:
-        idxs = await ui.checkbox(f"Ноды для деинсталляции {unit}:", labels)
-    chosen = [bindings[i] for i in idxs]
+        idxs = await ui.checkbox(f"Откуда деинсталлировать {unit}:", labels)
+    chosen = [cands[i] for i in idxs]
     if not chosen:
         print("Ноды не выбраны.")
         return
 
-    rm_folder = (await ui.confirm(f"Удалять также папку проекта на ноде (rm -rf {folder or '—'})?")) if folder else False
-    unit_path = shlex.quote(os.path.join(config.SYSTEMD_DIR, unit))
+    rm_folder = (await ui.confirm(f"Удалять также папку проекта (rm -rf {folder or '—'})?")) if folder else False
+    operator = getpass.getuser()
 
-    for b in chosen:
-        node = b["server_name"] or b["ip_address"]
-        ip = b["ip_address"]
-        if b["status"] == "leader":
+    for n, hf, hu in chosen:
+        node = n["server_name"] or n["ip_address"]
+        ip = n["ip_address"]
+        b = bound.get(n["id"])
+        if b and b["status"] == "leader":
             print(f"  ⚠️⚠️ {node} — АКТИВНЫЙ leader для {unit}!")
         if not await ui.confirm(f"  Деинсталлировать {unit} с {node}"
                                 f"{' + удалить папку' if rm_folder else ''}? Необратимо."):
             print(f"  ⏭️  {node} пропущен")
             continue
 
-        # 1) снять привязку (диспетчер перестаёт учитывать ноду — без failover-гонки)
-        await db.unbind_service_node(rec["program_id"], b["node_id"])
-        # 2) стоп/disable/удаление юнита (через ';' — не падаем, если не запущен/не enabled)
+        if b is not None:
+            await db.unbind_service_node(rec["program_id"], n["id"])
         inner = (f"systemctl stop {shlex.quote(unit)}; systemctl disable {shlex.quote(unit)}; "
-                 f"rm -f {unit_path}; systemctl daemon-reload")
+                 f"rm -f {shlex.quote(unit_etc)}; systemctl daemon-reload")
         res = await ssh.run_priv(ip, f"sh -c {shlex.quote(inner)}", timeout=60)
-        # 3) опц. удаление папки (под vova — sudo не нужен)
         folder_msg = ""
         if rm_folder and folder:
             fr = await ssh.run(ip, f"rm -rf {shlex.quote(folder)}", timeout=60)
             folder_msg = "  папка удалена" if fr.ok else f"  папка НЕ удалена: {fr.stderr or fr.stdout}"
-        ok = res.ok or "not loaded" in (res.stderr or "")  # systemctl мог ругнуться на отсутствующий юнит
-        print(f"  {'✅' if ok else '❌'} {node}: привязка снята; "
-              f"{'юнит остановлен/удалён' if res.ok else 'systemctl: ' + (res.stderr or res.stdout)[:120]}{folder_msg}")
+        print(f"  {'✅' if res.ok else '❌'} {node}: "
+              f"{'привязка снята; ' if b is not None else ''}"
+              f"{'юнит остановлен/удалён' if res.ok else 'priv: ' + (res.stderr or res.stdout)[:120]}{folder_msg}")
+        await db.journal_write(
+            rec["program_id"], n["id"], "uninstall",
+            folder_deployed=bool(folder and hf and not rm_folder),
+            service_installed=False, db_updated=False,
+            result=("ok" if res.ok else "fail"), commit=None, operator=operator,
+            details={"had_folder": hf, "had_unit": hu, "rm_folder": rm_folder})
 
     remaining = await db.get_service_bindings(rec["program_id"])
-    parts = [f"{b['server_name'] or b['ip_address']}[{b['status']}]" for b in remaining]
+    parts = [f"{x['server_name'] or x['ip_address']}[{x['status']}]" for x in remaining]
     print(f"\nОсталось привязок у {unit}: {', '.join(parts) if parts else '— нет'}")

@@ -3,6 +3,8 @@
 Читаем серверы (vocabulary.nodes) и записи программ (program.programdata),
 ищем по service_name. Переиспользует ту же БД, что и диспетчер ProgramManager2.0.
 """
+import json
+
 import asyncpg
 
 from logs import get_logger
@@ -147,6 +149,29 @@ class Database:
         return await self._conn.execute(
             "DELETE FROM dispatcher.service_status WHERE service_id = $1 AND node_id = $2",
             service_id, node_id,
+        )
+
+    # ----- журнал действий (dispatcher.deploy_journal) -----
+    async def journal_write(self, program_id: int, node_id: int | None, action: str,
+                            folder_deployed: bool, service_installed: bool, db_updated: bool,
+                            result: str | None, commit: str | None, operator: str | None,
+                            details: dict | None = None) -> None:
+        await self._conn.execute(
+            "INSERT INTO dispatcher.deploy_journal "
+            "(program_id, node_id, action, folder_deployed, service_installed, db_updated, "
+            " result, commit, operator, details) "
+            "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)",
+            program_id, node_id, action, folder_deployed, service_installed, db_updated,
+            result, commit, operator, json.dumps(details) if details is not None else None,
+        )
+
+    async def journal_recent(self, program_id: int) -> list[asyncpg.Record]:
+        """Последнее состояние журнала по каждой ноде для программы (для поиска «по журналу»)."""
+        return await self._conn.fetch(
+            "SELECT DISTINCT ON (node_id) node_id, action, folder_deployed, service_installed, "
+            "db_updated, result, ts FROM dispatcher.deploy_journal "
+            "WHERE program_id = $1 AND node_id IS NOT NULL ORDER BY node_id, ts DESC",
+            program_id,
         )
 
     async def get_service_bindings(self, service_id: int) -> list[asyncpg.Record]:

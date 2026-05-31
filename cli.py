@@ -155,6 +155,27 @@ async def _bind_and_report(db: Database, records: list, targets: list, results: 
         print(f"  {rec['service_name']:24} → {', '.join(parts) if parts else '—'}")
 
 
+def _node_flags(step: str) -> tuple[bool, bool]:
+    """Из шага DeployResult → (folder_deployed, service_installed)."""
+    folder = step not in ("ping", "rsync")
+    service = step in ("write_version", "done")
+    return folder, service
+
+
+async def _journal_deploy(db: Database, records: list, targets: list, results: list,
+                          local, action: str) -> None:
+    """Записать журнал по каждой (программа × нода): флаги шагов + результат."""
+    operator = getpass.getuser()
+    for rec in records:
+        for node, res in zip(targets, results):
+            folder, service = _node_flags(res.step)
+            await db.journal_write(
+                rec["program_id"], node["id"], action,
+                folder_deployed=folder, service_installed=service, db_updated=res.ok,
+                result=("ok" if res.ok else res.step), commit=local.commit, operator=operator,
+                details={"ip": node["ip_address"], "detail": res.detail})
+
+
 async def _verify_nodes(ssh: SshClient, targets: list, results: list,
                         remote_folder: str, project_dir: str) -> None:
     """Хэш-сверка содержимого на успешно задеплоенных нодах."""
@@ -271,6 +292,7 @@ async def _deploy_flow(db: Database, ssh: SshClient, project_dir: str, local,
     await _bind_and_report(db, records, targets, results)
     await _verify_nodes(ssh, targets, results, remote_folder, project_dir)
     status_mod.print_status(local, await status_mod.check_status(ssh, targets, remote_folder, local))
+    await _journal_deploy(db, records, targets, results, local, "add_server" if add_server else "deploy")
 
     audit_mod.write({
         "ts": datetime.now().isoformat(timespec="seconds"),
