@@ -7,12 +7,22 @@ import sys
 
 INTERACTIVE = True
 ASSUME_YES = False
+# Бэкенд интерактива (GUI). Если задан — ask/confirm/checkbox рисует он (диалоги),
+# CLI-реализация (questionary/input) не используется. Ядро остаётся UI-агностичным.
+_BACKEND = None
 
 
 def set_mode(interactive: bool, assume_yes: bool = False) -> None:
     global INTERACTIVE, ASSUME_YES
     INTERACTIVE = interactive
     ASSUME_YES = assume_yes
+
+
+def set_backend(backend) -> None:
+    """Подключить GUI-бэкенд с async-методами ask(prompt,default)/confirm(prompt)/
+    checkbox(title,labels,default_all). None — вернуть CLI-поведение."""
+    global _BACKEND
+    _BACKEND = backend
 
 
 def _has_tty() -> bool:
@@ -28,8 +38,9 @@ def _input(prompt: str) -> str:
 
 
 async def ask(prompt: str, default: str = "") -> str:
-    """Запросить строку. Корутина: в TTY — через questionary (единый IO, не мешаем с
-    raw-режимом prompt_toolkit); без TTY — input(); в неинтерактиве — default."""
+    """Запросить строку. GUI-бэкенд → диалог; иначе questionary (TTY) / input / default."""
+    if _BACKEND is not None:
+        return await _BACKEND.ask(prompt, default)
     if not INTERACTIVE:
         return default
     if _has_tty():
@@ -43,7 +54,9 @@ async def ask(prompt: str, default: str = "") -> str:
 
 
 async def confirm(prompt: str) -> bool:
-    """Да/нет. --yes → True; неинтерактив без --yes → False. В TTY — questionary.confirm."""
+    """Да/нет. GUI-бэкенд → диалог; иначе --yes/неинтерактив/questionary/input."""
+    if _BACKEND is not None:
+        return bool(await _BACKEND.confirm(prompt))
     if ASSUME_YES:
         return True
     if not INTERACTIVE:
@@ -80,6 +93,8 @@ async def checkbox(title: str, labels: list[str], default_all: bool = False) -> 
     """
     if not labels:
         return []
+    if _BACKEND is not None:
+        return await _BACKEND.checkbox(title, labels, default_all)
     if not INTERACTIVE:
         return list(range(len(labels))) if (ASSUME_YES or default_all) else []
     if not _has_tty():

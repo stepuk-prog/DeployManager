@@ -2,3 +2,4 @@ asyncpg~=0.30.0
 asyncssh~=2.21.0
 python-dotenv~=1.2.2
 questionary~=2.1.1
+flet~=0.85.2
