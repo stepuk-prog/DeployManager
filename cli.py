@@ -23,7 +23,7 @@ from settings import config
 
 logger = get_logger("cli")
 
-_ACTION_MAP = {"deploy": "1", "status": "2", "create": "3"}
+_ACTION_MAP = {"deploy": "1", "status": "2", "create": "3", "dashboard": "4"}
 
 
 def _ask(prompt: str, default: str = "") -> str:
@@ -193,12 +193,16 @@ async def run(args=None):
     try:
         action = _ACTION_MAP.get(getattr(args, "action", None)) if args else None
         action = action or _ask("\nДействие: [1] деплой  [2] статус версий  "
-                                "[3] создать запись programdata  [q] выход", "1")
+                                "[3] создать запись programdata  [4] дашборд  [q] выход", "1")
         if action == "q":
             return
         if action == "3":
             from core.programdata import create_record_interactive
             await create_record_interactive(db)
+            return
+        if action == "4":
+            from core import dashboard
+            await dashboard.show(ssh, db, project_dir, local)
             return
 
         remote_folder, local_svcs, linked_ips, records = await _resolve_remote_folder(db, project_dir)
