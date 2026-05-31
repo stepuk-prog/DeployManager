@@ -23,6 +23,9 @@ SSH_USER = os.getenv("SSH_USER", "vova")
 SSH_KEY = str(Path(os.getenv("SSH_KEY", "~/.ssh/id_nodes")).expanduser())
 SSH_PORT = int(os.getenv("SSH_PORT", "22"))
 SSH_CONNECT_TIMEOUT = int(os.getenv("SSH_CONNECT_TIMEOUT", "10"))
+# Пользователь для привилегированных шагов (юниты в /etc, systemctl). Если задан
+# (напр. root) — вход под ним без sudo; пусто — текущий SSH_USER + passwordless sudo.
+PRIV_USER = os.getenv("PRIV_USER", "")
 
 # ----- systemd -----
 SYSTEMD_DIR = "/etc/systemd/system"

@@ -70,7 +70,7 @@ async def uninstall(ssh: SshClient, db: Database, project_dir: str, preselect: s
         # 2) стоп/disable/удаление юнита (через ';' — не падаем, если не запущен/не enabled)
         inner = (f"systemctl stop {shlex.quote(unit)}; systemctl disable {shlex.quote(unit)}; "
                  f"rm -f {unit_path}; systemctl daemon-reload")
-        res = await ssh.run(ip, f"sh -c {shlex.quote(inner)}", sudo=True, timeout=60)
+        res = await ssh.run_priv(ip, f"sh -c {shlex.quote(inner)}", timeout=60)
         # 3) опц. удаление папки (под vova — sudo не нужен)
         folder_msg = ""
         if rm_folder and folder:

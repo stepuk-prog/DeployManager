@@ -62,7 +62,7 @@ class Deployer:
             dst = shlex.quote(os.path.join(config.SYSTEMD_DIR, name))
             cps.append(f"cp {src} {dst}")
         inner = " && ".join(cps + ["systemctl daemon-reload"])
-        res = await self.ssh.run(host, f"sh -c {shlex.quote(inner)}", sudo=True, timeout=30)
+        res = await self.ssh.run_priv(host, f"sh -c {shlex.quote(inner)}", timeout=30)
         if not res.ok:
             logger.error("install_services %s FAILED: %s", host, res.stderr or res.stdout)
         return res.ok
