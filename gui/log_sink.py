@@ -22,9 +22,19 @@ class LogSink:
             self._emit(self._buf)
             self._buf = ""
 
+    @staticmethod
+    def _color(line: str):
+        if any(m in line for m in ("✅", "up-to-date")):
+            return ft.Colors.GREEN
+        if any(m in line for m in ("❌", "‼️", "🛑", "FAILED", "Ошибка", "ошибка")):
+            return ft.Colors.RED
+        if any(m in line for m in ("⚠️", "stale", "DIRTY")):
+            return ft.Colors.AMBER
+        return None  # цвет по умолчанию (тема)
+
     def _emit(self, line: str) -> None:
-        self.view.controls.append(ft.Text(line or " ", selectable=True,
-                                          font_family="monospace", size=12))
+        self.view.controls.append(ft.Text(line or " ", selectable=True, font_family="monospace",
+                                          size=12, color=self._color(line)))
         self._update()
 
     def _update(self) -> None:
