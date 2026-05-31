@@ -112,6 +112,17 @@ class Database:
         )
         return "inserted" if row["inserted"] else f"kept:{row['status']}"
 
+    async def update_service_state(self, service_id: int, node_id: int,
+                                   running: bool, systemd_error: str | None) -> None:
+        """Записать фактическое состояние сервиса на ноде (только существующая привязка;
+        leader/standby не трогаем)."""
+        await self._conn.execute(
+            "UPDATE dispatcher.service_status "
+            "SET running = $3, systemd_error = $4, last_running_update = now() "
+            "WHERE service_id = $1 AND node_id = $2",
+            service_id, node_id, running, systemd_error,
+        )
+
     async def get_service_bindings(self, service_id: int) -> list[asyncpg.Record]:
         """Все привязки сервиса к нодам (для отчёта)."""
         return await self._conn.fetch(
