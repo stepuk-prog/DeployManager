@@ -46,7 +46,7 @@ async def uninstall(ssh: SshClient, db: Database, project_dir: str, preselect: s
                 else [int(t) - 1 for t in preselect.replace(" ", "").split(",")
                       if t.isdigit() and 1 <= int(t) <= len(bindings)])
     else:
-        idxs = ui.checkbox(f"Ноды для деинсталляции {unit}:", labels)
+        idxs = await ui.checkbox(f"Ноды для деинсталляции {unit}:", labels)
     chosen = [bindings[i] for i in idxs]
     if not chosen:
         print("Ноды не выбраны.")

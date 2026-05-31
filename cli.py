@@ -53,12 +53,12 @@ def _parse_selection(nodes: list, raw: str) -> list:
     return out
 
 
-def _select_nodes(nodes: list, linked_ips: set[str], preselect: str | None = None) -> list:
+async def _select_nodes(nodes: list, linked_ips: set[str], preselect: str | None = None) -> list:
     if preselect:
         return _parse_selection(nodes, preselect)
     labels = [f"{'*' if n['ip_address'] in linked_ips else ' '} {(n['server_name'] or n['hostname']):18} "
               f"{n['ip_address']:16} {n['description'] or ''}" for n in nodes]
-    idxs = ui.checkbox("Ноды для операции (* — связаны с программой; пробел — отметить, enter — ок):", labels)
+    idxs = await ui.checkbox("Ноды для операции (* — связаны с программой; пробел — отметить, enter — ок):", labels)
     return [nodes[i] for i in idxs]
 
 
@@ -220,7 +220,7 @@ async def _deploy_flow(db: Database, ssh: SshClient, project_dir: str, local,
         print("🛑 Деплой отменён на валидации.")
         return
 
-    targets = _select_nodes(nodes, linked_ips, preselect)
+    targets = await _select_nodes(nodes, linked_ips, preselect)
     if not targets:
         print("🛑 Ноды не выбраны.")
         return

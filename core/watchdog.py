@@ -57,7 +57,7 @@ async def manage(db: Database, project_dir: str, command: str | None = None,
                 else [int(t) - 1 for t in preselect.replace(" ", "").split(",")
                       if t.isdigit() and 1 <= int(t) <= len(bindings)])
     else:
-        idxs = ui.checkbox(f"Ноды для {rec['service_name']}:", labels)
+        idxs = await ui.checkbox(f"Ноды для {rec['service_name']}:", labels)
     chosen = [bindings[i] for i in idxs]
     if not chosen:
         print("Ноды не выбраны.")

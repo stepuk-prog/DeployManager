@@ -44,12 +44,14 @@ def _checkbox_text(title: str, labels: list[str]) -> list[int]:
             if t.isdigit() and 1 <= int(t) <= len(labels)]
 
 
-def checkbox(title: str, labels: list[str], default_all: bool = False) -> list[int]:
-    """Множественный выбор чек-боксами → список выбранных индексов (0-based).
+async def checkbox(title: str, labels: list[str], default_all: bool = False) -> list[int]:
+    """Множественный выбор чек-боксами → список выбранных индексов (0-based). Корутина:
+    вся программа крутится в asyncio.run, поэтому используем ask_async() (sync .ask()
+    внутри работающего loop падает «run_async was never awaited»).
 
     Неинтерактив: все (default_all/--yes) или пусто. Интерактив + настоящий TTY:
-    questionary-чекбоксы (пробел/enter). Без TTY (напр. Run-консоль IDE) или без
-    questionary — откат на текстовый ввод номеров (с пояснением причины).
+    questionary-чекбоксы (пробел/enter). Без TTY (Run-консоль IDE) или без questionary —
+    откат на текстовый ввод номеров (с пояснением причины).
     """
     if not labels:
         return []
@@ -63,7 +65,7 @@ def checkbox(title: str, labels: list[str], default_all: bool = False) -> list[i
         import questionary
         choices = [questionary.Choice(title=lab, value=i, checked=default_all)
                    for i, lab in enumerate(labels)]
-        picked = questionary.checkbox(title, choices=choices).ask()
+        picked = await questionary.checkbox(title, choices=choices).ask_async()
         return picked if picked is not None else []
     except Exception as e:
         print(f"(чек-боксы недоступны: {e} — текстовый ввод)")
