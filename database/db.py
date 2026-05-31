@@ -51,6 +51,17 @@ class Database:
             service_names,
         )
 
+    async def list_programs(self) -> list[asyncpg.Record]:
+        """Все программы из programdata (для деинсталляции «из БД», в т.ч. старые)."""
+        return await self._conn.fetch(
+            "SELECT program_id, service_name, folder, status, dispatcher, program_name "
+            "FROM program.programdata ORDER BY service_name")
+
+    async def delete_program(self, program_id: int) -> str:
+        """Удалить запись программы (каскадно — service_status/cron/option_setting/… по FK)."""
+        return await self._conn.execute(
+            "DELETE FROM program.programdata WHERE program_id = $1", program_id)
+
     async def update_program_folder(self, program_id: int, folder: str) -> None:
         """Поправить путь установки в БД (при разрешении конфликта валидации)."""
         await self._conn.execute(
