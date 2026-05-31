@@ -1,0 +1,27 @@
+"""Точка входа DeployManager (интерактивный и неинтерактивный режимы)."""
+import argparse
+import asyncio
+
+from cli import run
+
+
+def _parse_args():
+    p = argparse.ArgumentParser(description="DeployManager — деплой проектов на ноды")
+    p.add_argument("--project", help="папка проекта (по умолчанию спросит/cwd)")
+    p.add_argument("--action", choices=["deploy", "status", "create"], help="действие без меню")
+    p.add_argument("--nodes", help="ноды: 'all' или список имён/ip/номеров через запятую")
+    p.add_argument("--dry-run", action="store_true", dest="dry_run", help="предпросмотр без изменений")
+    p.add_argument("--yes", action="store_true", help="неинтерактивно: не спрашивать, безопасные дефолты")
+    return p.parse_args()
+
+
+def main():
+    args = _parse_args()
+    try:
+        asyncio.run(run(args))
+    except KeyboardInterrupt:
+        print("\nПрервано.")
+
+
+if __name__ == "__main__":
+    main()
