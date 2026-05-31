@@ -44,6 +44,9 @@ RSYNC_DELETE = os.getenv("RSYNC_DELETE", "0").strip().lower() in ("1", "true", "
 # Имя файла-манифеста версии на сервере (git SHA + метаданные деплоя).
 VERSION_FILE = "VERSION"
 
+# Стартовая папка для диалога «Обзор…» в GUI (где лежат проекты).
+PROJECTS_DIR = str(Path(os.getenv("PROJECTS_DIR", "~/PythonProjects")).expanduser())
+
 # ----- Provisioning на ноде (последовательность из README/DEPLOY, перенесённая в код) -----
 # venv → pip install -U pip → pip install -r requirements.txt → playwright install firefox
 PROVISION = os.getenv("PROVISION", "1").strip().lower() in ("1", "true", "yes", "on")

@@ -34,7 +34,8 @@ async def main(page: ft.Page):
     flet_ui = FletUi(page)
 
     async def choose_project(_):
-        path = await file_picker.get_directory_path(dialog_title="Выберите папку проекта")
+        path = await file_picker.get_directory_path(
+            dialog_title="Выберите папку проекта", initial_directory=config.PROJECTS_DIR or None)
         if not path:
             return
         state["path"] = path
