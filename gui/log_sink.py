@@ -22,13 +22,17 @@ class LogSink:
             self._emit(self._buf)
             self._buf = ""
 
+    # красный: провал/конфуз + КЛЮЧЕВОЕ предупреждение (двойное ⚠️⚠️, напр. leader)
+    _RED = ("❌", "⛔", "‼️", "🛑", "FAILED", "Ошибка", "ошибка", "⚠️⚠️")
+    _AMBER = ("⚠️", "stale", "DIRTY")   # обычные (мелкие) предупреждения
+
     @staticmethod
     def _color(line: str):
-        if any(m in line for m in ("✅", "up-to-date")):
-            return ft.Colors.GREEN
-        if any(m in line for m in ("❌", "‼️", "🛑", "FAILED", "Ошибка", "ошибка")):
+        if any(m in line for m in LogSink._RED):       # сначала красный — ловит ⚠️⚠️ до ⚠️
             return ft.Colors.RED
-        if any(m in line for m in ("⚠️", "stale", "DIRTY")):
+        if "✅" in line or "up-to-date" in line:
+            return ft.Colors.GREEN
+        if any(m in line for m in LogSink._AMBER):
             return ft.Colors.AMBER
         return None  # цвет по умолчанию (тема)
 

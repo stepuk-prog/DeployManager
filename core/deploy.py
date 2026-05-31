@@ -61,5 +61,5 @@ def print_deploy_results(results: list[DeployResult]) -> None:
     print(f"\n{'НОДА':18} {'IP':16} РЕЗУЛЬТАТ")
     print("-" * 60)
     for r in results:
-        status = "✅ done" if r.ok else f"❌ {r.step} {r.detail}"
+        status = "✅ done" if r.ok else f"⛔ {r.step} {r.detail}"
         print(f"{r.node:18} {r.ip:16} {status}")
