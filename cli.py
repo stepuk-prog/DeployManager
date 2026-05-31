@@ -174,6 +174,30 @@ async def _verify_nodes(ssh: SshClient, targets: list, results: list,
         print(line)
 
 
+async def _leader_guard(db: Database, records: list, targets: list) -> list:
+    """Предупредить, если среди целей есть активные leader-ноды (деплой перезапишет
+    работающий код). Возвращает targets (возможно без leader-нод, если оператор отказался)."""
+    leader_of: dict[int, list[str]] = {}
+    for rec in records:
+        for b in await db.get_service_bindings(rec["program_id"]):
+            if b["status"] == "leader":
+                leader_of.setdefault(b["node_id"], []).append(rec["service_name"])
+    hit = [(n, leader_of[n["id"]]) for n in targets if n["id"] in leader_of]
+    if not hit:
+        return targets
+    print("\n  ⚠️⚠️ ВНИМАНИЕ: среди целей есть АКТИВНЫЕ leader-ноды:")
+    for n, svcs in hit:
+        print(f"      {(n['server_name'] or n['ip_address'])} — leader для: {', '.join(svcs)}")
+    print("      Деплой перезапишет РАБОТАЮЩИЙ код. Рекомендуется сначала переключить")
+    print("      программу на другой сервер через диспетчер, затем деплоить.")
+    if ui.confirm("Всё равно деплоить на активные leader-ноды?"):
+        return targets
+    leader_ids = {n["id"] for n, _ in hit}
+    filtered = [n for n in targets if n["id"] not in leader_ids]
+    print(f"      ⏭️  Leader-ноды исключены ({len(leader_ids)}); останется {len(filtered)}.")
+    return filtered
+
+
 async def _show_deployment_map(db: Database, records: list) -> None:
     """Где проект уже развёрнут (для режима «добавить сервер»)."""
     print("\n── Текущее развёртывание (где уже стоит) ──")
@@ -217,6 +241,11 @@ async def _deploy_flow(db: Database, ssh: SshClient, project_dir: str, local,
         return
     if not targets:
         print("🛑 После предполётной проверки не осталось нод.")
+        return
+
+    targets = await _leader_guard(db, records, targets)
+    if not targets:
+        print("🛑 После исключения активных leader-нод не осталось целей.")
         return
 
     print(f"\nБудет {'СУХОЙ ПРОГОН на' if dry_run else 'задеплоено на'} {len(targets)} нод(ы):")
