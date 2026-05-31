@@ -92,5 +92,5 @@ async def main(page: ft.Page):
             branch("Деинсталляция", "uninstall"),
         ], wrap=True),
         ft.Container(content=log_view, expand=True, padding=8,
-                     border=ft.border.all(1, ft.Colors.GREY), border_radius=6),
+                     border=ft.Border.all(1, ft.Colors.GREY), border_radius=6),
     )
