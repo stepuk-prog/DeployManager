@@ -11,6 +11,7 @@ from classes.manifest import local_version
 from core import ui
 from gui.backend import FletUi
 from gui.log_sink import LogSink
+from settings import config
 
 
 async def main(page: ft.Page):
