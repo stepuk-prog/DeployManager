@@ -28,3 +28,31 @@ def confirm(prompt: str) -> bool:
     if not INTERACTIVE:
         return False
     return input(f"{prompt} [y/N]: ").strip().lower() == "y"
+
+
+def checkbox(title: str, labels: list[str], default_all: bool = False) -> list[int]:
+    """Множественный выбор чек-боксами → список выбранных индексов (0-based).
+
+    Неинтерактив: все (default_all) или пусто. Интерактив: questionary-чекбоксы;
+    если её нет/не TTY — откат на текстовый ввод номеров через запятую / 'all'.
+    """
+    if not labels:
+        return []
+    if not INTERACTIVE:
+        return list(range(len(labels))) if (ASSUME_YES or default_all) else []
+    try:
+        import questionary
+        choices = [questionary.Choice(title=lab, value=i, checked=default_all)
+                   for i, lab in enumerate(labels)]
+        picked = questionary.checkbox(title, choices=choices).ask()
+        return picked if picked is not None else []
+    except Exception:
+        # откат: текстовый ввод номеров
+        print(title)
+        for i, lab in enumerate(labels, 1):
+            print(f"  [{i}] {lab}")
+        raw = input("Номера через запятую / 'all': ").strip()
+        if raw.lower() == "all":
+            return list(range(len(labels)))
+        return [int(t) - 1 for t in raw.replace(" ", "").split(",")
+                if t.isdigit() and 1 <= int(t) <= len(labels)]

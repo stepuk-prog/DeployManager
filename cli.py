@@ -56,12 +56,10 @@ def _parse_selection(nodes: list, raw: str) -> list:
 def _select_nodes(nodes: list, linked_ips: set[str], preselect: str | None = None) -> list:
     if preselect:
         return _parse_selection(nodes, preselect)
-    print("\nДоступные online-ноды (* — связаны с программой в диспетчере):")
-    for i, n in enumerate(nodes, 1):
-        mark = "*" if n["ip_address"] in linked_ips else " "
-        print(f"  [{i}]{mark} {(n['server_name'] or n['hostname']):18} "
-              f"{n['ip_address']:16} {n['description'] or ''}")
-    return _parse_selection(nodes, ui.ask("\nНоды для операции (напр. 1,3 / 'all')", "all"))
+    labels = [f"{'*' if n['ip_address'] in linked_ips else ' '} {(n['server_name'] or n['hostname']):18} "
+              f"{n['ip_address']:16} {n['description'] or ''}" for n in nodes]
+    idxs = ui.checkbox("Ноды для операции (* — связаны с программой; пробел — отметить, enter — ок):", labels)
+    return [nodes[i] for i in idxs]
 
 
 async def _resolve_remote_folder(db: Database, project_dir: str):

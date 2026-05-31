@@ -50,16 +50,15 @@ async def manage(db: Database, project_dir: str, command: str | None = None,
     if not bindings:
         print("У программы нет привязок к нодам (dispatcher.service_status).")
         return
-    print(f"\nНоды для {rec['service_name']}:")
-    for i, b in enumerate(bindings, 1):
-        print(f"  [{i}] {(b['server_name'] or b['ip_address']):16} [{b['status']}] "
-              f"running={b['running']}")
-    raw = preselect or ui.ask("Ноды (номера через запятую / 'all')", "all")
-    if raw.lower() == "all":
-        chosen = bindings
+    labels = [f"{(b['server_name'] or b['ip_address']):16} [{b['status']}] running={b['running']}"
+              for b in bindings]
+    if preselect:
+        idxs = (list(range(len(bindings))) if preselect.lower() == "all"
+                else [int(t) - 1 for t in preselect.replace(" ", "").split(",")
+                      if t.isdigit() and 1 <= int(t) <= len(bindings)])
     else:
-        chosen = [bindings[int(t) - 1] for t in raw.replace(" ", "").split(",")
-                  if t.isdigit() and 1 <= int(t) <= len(bindings)]
+        idxs = ui.checkbox(f"Ноды для {rec['service_name']}:", labels)
+    chosen = [bindings[i] for i in idxs]
     if not chosen:
         print("Ноды не выбраны.")
         return

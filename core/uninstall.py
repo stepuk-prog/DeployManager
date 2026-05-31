@@ -39,15 +39,15 @@ async def uninstall(ssh: SshClient, db: Database, project_dir: str, preselect: s
     if not bindings:
         print("У программы нет привязок к нодам — деинсталлировать нечего.")
         return
-    print(f"\nНоды {unit}:")
-    for i, b in enumerate(bindings, 1):
-        print(f"  [{i}] {(b['server_name'] or b['ip_address']):16} [{b['status']}] running={b['running']}")
-    raw = preselect or ui.ask("Ноды для деинсталляции (номера / 'all')", "")
-    if raw.lower() == "all":
-        chosen = bindings
+    labels = [f"{(b['server_name'] or b['ip_address']):16} [{b['status']}] running={b['running']}"
+              for b in bindings]
+    if preselect:
+        idxs = (list(range(len(bindings))) if preselect.lower() == "all"
+                else [int(t) - 1 for t in preselect.replace(" ", "").split(",")
+                      if t.isdigit() and 1 <= int(t) <= len(bindings)])
     else:
-        chosen = [bindings[int(t) - 1] for t in raw.replace(" ", "").split(",")
-                  if t.isdigit() and 1 <= int(t) <= len(bindings)]
+        idxs = ui.checkbox(f"Ноды для деинсталляции {unit}:", labels)
+    chosen = [bindings[i] for i in idxs]
     if not chosen:
         print("Ноды не выбраны.")
         return
