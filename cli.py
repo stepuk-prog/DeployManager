@@ -23,7 +23,9 @@ from settings import config
 
 logger = get_logger("cli")
 
-_ACTION_MAP = {"deploy": "1", "status": "2", "create": "3", "dashboard": "4", "state": "5"}
+# Три основные ветки + служебные действия для автоматизации.
+_ACTION_MAP = {"new": "1", "add": "2", "check": "3", "dashboard": "3", "status": "3",
+               "create": "create", "state": "state"}
 
 
 def _ask(prompt: str, default: str = "") -> str:
@@ -172,13 +174,93 @@ async def _verify_nodes(ssh: SshClient, targets: list, results: list,
         print(line)
 
 
+async def _show_deployment_map(db: Database, records: list) -> None:
+    """Где проект уже развёрнут (для режима «добавить сервер»)."""
+    print("\n── Текущее развёртывание (где уже стоит) ──")
+    any_bound = False
+    for rec in records:
+        bindings = await db.get_service_bindings(rec["program_id"])
+        any_bound = any_bound or bool(bindings)
+        parts = [f"{b['server_name'] or b['ip_address']}[{b['status']}]" for b in bindings]
+        print(f"  {rec['service_name']:24} → {', '.join(parts) if parts else '— нигде'}")
+    if not any_bound:
+        print("  (привязок нет — проект ещё нигде не развёрнут; это скорее режим [1] «с нуля»)")
+
+
+async def _deploy_flow(db: Database, ssh: SshClient, project_dir: str, local,
+                       remote_folder: str, local_svcs: list, records: list, nodes: list,
+                       linked_ips: set, preselect: str | None, dry_run: bool, add_server: bool) -> None:
+    """Общий pipeline деплоя для веток «с нуля» и «добавить сервер»."""
+    if add_server:
+        await _show_deployment_map(db, records)
+
+    if not await validate_mod.validate_paths(db, project_dir):
+        print("🛑 Деплой отменён на валидации.")
+        return
+
+    targets = _select_nodes(nodes, linked_ips, preselect)
+    if not targets:
+        print("🛑 Ноды не выбраны.")
+        return
+    service_files = [s.name for s in local_svcs]
+
+    extra_cmds: list[str] = []
+    if config.PROVISION:
+        for pkg, cmd in provision_mod.detect_post_install(project_dir):
+            if ui.confirm(f"В requirements есть '{pkg}' — нужна отдельная установка ('{cmd}'). "
+                          f"Выполнить на нодах?"):
+                extra_cmds.append(cmd)
+
+    targets = await _preflight(ssh, targets, remote_folder, local, service_files)
+    if targets is None:
+        print("🛑 Деплой отменён (preflight).")
+        return
+    if not targets:
+        print("🛑 После предполётной проверки не осталось нод.")
+        return
+
+    print(f"\nБудет {'СУХОЙ ПРОГОН на' if dry_run else 'задеплоено на'} {len(targets)} нод(ы):")
+    for n in targets:
+        print(f"  • {(n['server_name'] or n['hostname'])} ({n['ip_address']})")
+    prov = ("venv+pip" + (" + " + ", ".join(extra_cmds) if extra_cmds else "")) if config.PROVISION else "нет"
+    print(f"Код → {remote_folder}; юниты → /etc/systemd/system ({len(service_files)} шт.); "
+          f"provisioning: {prov}; версия {local.short}")
+    if not dry_run and not ui.confirm("Подтвердить деплой?"):
+        print("🛑 Отменено.")
+        return
+
+    results = await deploy_mod.deploy(
+        ssh, Deployer(ssh), targets, project_dir, remote_folder, service_files,
+        local, deployed_by=getpass.getuser(),
+        deployed_at=datetime.now().isoformat(timespec="seconds"),
+        extra_cmds=extra_cmds, dry_run=dry_run,
+    )
+    deploy_mod.print_deploy_results(results)
+
+    if dry_run:
+        print("\nСухой прогон — изменений не внесено (provision/юниты/привязки/VERSION пропущены).")
+        return
+
+    await _bind_and_report(db, records, targets, results)
+    await _verify_nodes(ssh, targets, results, remote_folder, project_dir)
+    status_mod.print_status(local, await status_mod.check_status(ssh, targets, remote_folder, local))
+
+    audit_mod.write({
+        "ts": datetime.now().isoformat(timespec="seconds"),
+        "user": getpass.getuser(), "project": project_dir, "mode": "add" if add_server else "new",
+        "commit": local.commit, "short": local.short, "dirty": local.dirty,
+        "remote_folder": remote_folder, "extra_cmds": extra_cmds,
+        "nodes": [{"node": r.node, "ip": r.ip, "ok": r.ok, "step": r.step} for r in results],
+    })
+
+
 async def run(args=None):
     interactive = not (args and getattr(args, "yes", False))
     ui.set_mode(interactive=interactive, assume_yes=bool(args and getattr(args, "yes", False)))
     dry_run = bool(args and getattr(args, "dry_run", False))
     preselect = getattr(args, "nodes", None) if args else None
 
-    project_dir = (args.project if args and args.project else _ask("Папка проекта для деплоя", os.getcwd()))
+    project_dir = (args.project if args and args.project else _ask("Папка проекта", os.getcwd()))
     project_dir = os.path.abspath(os.path.expanduser(project_dir))
     if not os.path.isdir(os.path.join(project_dir, "systemd")):
         print(f"⚠️  В {project_dir} нет папки systemd/ — продолжаю, но юниты ставить нечего.")
@@ -192,20 +274,19 @@ async def run(args=None):
     ssh = SshClient()
     try:
         action = _ACTION_MAP.get(getattr(args, "action", None)) if args else None
-        action = action or _ask("\nДействие: [1] деплой  [2] статус версий  "
-                                "[3] создать запись programdata  [4] дашборд  "
-                                "[5] проверка состояния  [q] выход", "1")
+        action = action or _ask(
+            "\nРежим:\n"
+            "  [1] деплой нового проекта (с нуля на чистые серверы)\n"
+            "  [2] добавить сервер к существующему деплою\n"
+            "  [3] проверить версии на серверах (vs локальной)\n"
+            "  [q] выход\nВыбор", "1")
         if action == "q":
             return
-        if action == "3":
+        if action == "create":   # служебное (для автоматизации)
             from core.programdata import create_record_interactive
             await create_record_interactive(db)
             return
-        if action == "4":
-            from core import dashboard
-            await dashboard.show(ssh, db, project_dir, local)
-            return
-        if action == "5":
+        if action == "state":     # служебное: обновить running в service_status
             from core import state
             await state.check_state(ssh, db, project_dir)
             return
@@ -216,75 +297,22 @@ async def run(args=None):
             return
         print(f"Путь установки на серверах: {remote_folder}")
 
+        if action == "3":   # ── проверить версии (дашборд + опц. state-check) ──
+            from core import dashboard
+            await dashboard.show(ssh, db, project_dir, local)
+            if ui.confirm("\nОбновить фактическое состояние (running) в БД по нодам?"):
+                from core import state
+                await state.check_state(ssh, db, project_dir)
+            return
+
         nodes = await db.get_online_nodes()
         if not nodes:
             print("🛑 Нет online-нод в vocabulary.nodes.")
             return
 
-        if action == "2":
-            targets = _select_nodes(nodes, linked_ips, preselect)
-            status_mod.print_status(local, await status_mod.check_status(ssh, targets, remote_folder, local))
-            return
-
-        # ---- деплой ----
-        if not await validate_mod.validate_paths(db, project_dir):
-            print("🛑 Деплой отменён на валидации.")
-            return
-
-        targets = _select_nodes(nodes, linked_ips, preselect)
-        if not targets:
-            print("🛑 Ноды не выбраны.")
-            return
-        service_files = [s.name for s in local_svcs]
-
-        extra_cmds: list[str] = []
-        if config.PROVISION:
-            for pkg, cmd in provision_mod.detect_post_install(project_dir):
-                if ui.confirm(f"В requirements есть '{pkg}' — нужна отдельная установка ('{cmd}'). "
-                              f"Выполнить на нодах?"):
-                    extra_cmds.append(cmd)
-
-        targets = await _preflight(ssh, targets, remote_folder, local, service_files)
-        if targets is None:
-            print("🛑 Деплой отменён (preflight).")
-            return
-        if not targets:
-            print("🛑 После предполётной проверки не осталось нод.")
-            return
-
-        print(f"\nБудет {'СУХОЙ ПРОГОН на' if dry_run else 'задеплоено на'} {len(targets)} нод(ы):")
-        for n in targets:
-            print(f"  • {(n['server_name'] or n['hostname'])} ({n['ip_address']})")
-        prov = ("venv+pip" + (" + " + ", ".join(extra_cmds) if extra_cmds else "")) if config.PROVISION else "нет"
-        print(f"Код → {remote_folder}; юниты → /etc/systemd/system ({len(service_files)} шт.); "
-              f"provisioning: {prov}; версия {local.short}")
-        if not dry_run and not ui.confirm("Подтвердить деплой?"):
-            print("🛑 Отменено.")
-            return
-
-        results = await deploy_mod.deploy(
-            ssh, Deployer(ssh), targets, project_dir, remote_folder, service_files,
-            local, deployed_by=getpass.getuser(),
-            deployed_at=datetime.now().isoformat(timespec="seconds"),
-            extra_cmds=extra_cmds, dry_run=dry_run,
-        )
-        deploy_mod.print_deploy_results(results)
-
-        if dry_run:
-            print("\nСухой прогон — изменений не внесено (provision/юниты/привязки/VERSION пропущены).")
-            return
-
-        await _bind_and_report(db, records, targets, results)
-        await _verify_nodes(ssh, targets, results, remote_folder, project_dir)
-        status_mod.print_status(local, await status_mod.check_status(ssh, targets, remote_folder, local))
-
-        audit_mod.write({
-            "ts": datetime.now().isoformat(timespec="seconds"),
-            "user": getpass.getuser(), "project": project_dir,
-            "commit": local.commit, "short": local.short, "dirty": local.dirty,
-            "remote_folder": remote_folder, "extra_cmds": extra_cmds,
-            "nodes": [{"node": r.node, "ip": r.ip, "ok": r.ok, "step": r.step} for r in results],
-        })
+        # ── ветки 1 (с нуля) и 2 (добавить сервер) — общий pipeline ──
+        await _deploy_flow(db, ssh, project_dir, local, remote_folder, local_svcs, records,
+                           nodes, linked_ips, preselect, dry_run, add_server=(action == "2"))
     finally:
         await ssh.close_all()
         await db.close()
