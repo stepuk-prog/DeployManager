@@ -142,6 +142,13 @@ class Database:
             instruction_id,
         )
 
+    async def unbind_service_node(self, service_id: int, node_id: int) -> str:
+        """Снять привязку сервиса к ноде (deinstall). Возвращает тег команды (напр. 'DELETE 1')."""
+        return await self._conn.execute(
+            "DELETE FROM dispatcher.service_status WHERE service_id = $1 AND node_id = $2",
+            service_id, node_id,
+        )
+
     async def get_service_bindings(self, service_id: int) -> list[asyncpg.Record]:
         """Все привязки сервиса к нодам (для отчёта)."""
         return await self._conn.fetch(

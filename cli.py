@@ -25,7 +25,7 @@ logger = get_logger("cli")
 
 # Три основные ветки + служебные действия для автоматизации.
 _ACTION_MAP = {"new": "1", "add": "2", "check": "3", "dashboard": "3", "status": "3",
-               "create": "create", "state": "state", "manage": "manage"}
+               "create": "create", "state": "state", "manage": "manage", "uninstall": "uninstall"}
 
 
 def _ask(prompt: str, default: str = "") -> str:
@@ -323,6 +323,10 @@ async def run(args=None):
             from core import watchdog
             await watchdog.manage(db, project_dir, command=getattr(args, "command", None),
                                   preselect=preselect)
+            return
+        if action == "uninstall":  # деструктивное: снять с ноды (только свои service_name)
+            from core import uninstall
+            await uninstall.uninstall(ssh, db, project_dir, preselect=preselect)
             return
 
         remote_folder, local_svcs, linked_ips, records = await _resolve_remote_folder(db, project_dir)
