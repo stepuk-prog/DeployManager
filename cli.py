@@ -28,8 +28,8 @@ _ACTION_MAP = {"new": "1", "add": "2", "check": "3", "dashboard": "3", "status":
                "create": "create", "state": "state", "manage": "manage", "uninstall": "uninstall"}
 
 
-def _ask(prompt: str, default: str = "") -> str:
-    return ui.ask(prompt, default)
+async def _ask(prompt: str, default: str = "") -> str:
+    return await ui.ask(prompt, default)
 
 
 def _parse_selection(nodes: list, raw: str) -> list:
@@ -75,10 +75,10 @@ async def _resolve_remote_folder(db: Database, project_dir: str):
     if len(folders) == 1:
         return folders.pop(), local_svcs, linked_ips, records
     if not folders:
-        return (_ask("Не нашёл программу в programdata. Путь установки вручную", "") or None), \
+        return (await _ask("Не нашёл программу в programdata. Путь установки вручную", "") or None), \
             local_svcs, linked_ips, records
     print(f"⚠️  В programdata разные пути: {folders}")
-    return (_ask("Укажи путь установки вручную", sorted(folders)[0]) or None), \
+    return (await _ask("Укажи путь установки вручную", sorted(folders)[0]) or None), \
         local_svcs, linked_ips, records
 
 
@@ -120,7 +120,7 @@ async def _preflight(ssh: SshClient, targets: list, remote_folder: str,
             print(f"        папка уже есть: {remote_folder}")
         if existing_units:
             print(f"        юниты уже установлены: {', '.join(existing_units)}")
-        ans = ui.ask("        [o] перезаписать / [s] пропустить ноду / [a] отмена всего", "s").lower()
+        ans = (await ui.ask("        [o] перезаписать / [s] пропустить ноду / [a] отмена всего", "s")).lower()
         if ans == "o":
             approved.append(node)
         elif ans == "a":
@@ -188,7 +188,7 @@ async def _leader_guard(db: Database, records: list, targets: list) -> list:
         print(f"      {(n['server_name'] or n['ip_address'])} — leader для: {', '.join(svcs)}")
     print("      Деплой перезапишет РАБОТАЮЩИЙ код. Рекомендуется сначала переключить")
     print("      программу на другой сервер через диспетчер, затем деплоить.")
-    if ui.confirm("Всё равно деплоить на активные leader-ноды?"):
+    if await ui.confirm("Всё равно деплоить на активные leader-ноды?"):
         return targets
     leader_ids = {n["id"] for n, _ in hit}
     filtered = [n for n in targets if n["id"] not in leader_ids]
@@ -229,8 +229,8 @@ async def _deploy_flow(db: Database, ssh: SshClient, project_dir: str, local,
     extra_cmds: list[str] = []
     if config.PROVISION:
         for pkg, cmd in provision_mod.detect_post_install(project_dir):
-            if ui.confirm(f"В requirements есть '{pkg}' — нужна отдельная установка ('{cmd}'). "
-                          f"Выполнить на нодах?"):
+            if await ui.confirm(f"В requirements есть '{pkg}' — нужна отдельная установка ('{cmd}'). "
+                                f"Выполнить на нодах?"):
                 extra_cmds.append(cmd)
 
     targets = await _preflight(ssh, targets, remote_folder, local, service_files)
@@ -252,7 +252,7 @@ async def _deploy_flow(db: Database, ssh: SshClient, project_dir: str, local,
     prov = ("venv+pip" + (" + " + ", ".join(extra_cmds) if extra_cmds else "")) if config.PROVISION else "нет"
     print(f"Код → {remote_folder}; юниты → /etc/systemd/system ({len(service_files)} шт.); "
           f"provisioning: {prov}; версия {local.short}")
-    if not dry_run and not ui.confirm("Подтвердить деплой?"):
+    if not dry_run and not await ui.confirm("Подтвердить деплой?"):
         print("🛑 Отменено.")
         return
 
@@ -287,7 +287,7 @@ async def run(args=None):
     dry_run = bool(args and getattr(args, "dry_run", False))
     preselect = getattr(args, "nodes", None) if args else None
 
-    project_dir = (args.project if args and args.project else _ask("Папка проекта", os.getcwd()))
+    project_dir = (args.project if args and args.project else await _ask("Папка проекта", os.getcwd()))
     project_dir = os.path.abspath(os.path.expanduser(project_dir))
     if not os.path.isdir(os.path.join(project_dir, "systemd")):
         print(f"⚠️  В {project_dir} нет папки systemd/ — продолжаю, но юниты ставить нечего.")
@@ -301,7 +301,7 @@ async def run(args=None):
     ssh = SshClient()
     try:
         action = _ACTION_MAP.get(getattr(args, "action", None)) if args else None
-        action = action or _ask(
+        action = action or await _ask(
             "\nРежим:\n"
             "  [1] деплой нового проекта (с нуля на чистые серверы)\n"
             "  [2] добавить сервер к существующему деплою\n"
@@ -336,10 +336,10 @@ async def run(args=None):
         if action == "3":   # ── проверить версии (дашборд + опц. state-check + управление) ──
             from core import dashboard
             await dashboard.show(ssh, db, project_dir, local)
-            if ui.confirm("\nОбновить фактическое состояние (running) в БД по нодам?"):
+            if await ui.confirm("\nОбновить фактическое состояние (running) в БД по нодам?"):
                 from core import state
                 await state.check_state(ssh, db, project_dir)
-            if ui.confirm("Управление сервисом (start/stop/restart через диспетчер)?"):
+            if await ui.confirm("Управление сервисом (start/stop/restart через диспетчер)?"):
                 from core import watchdog
                 await watchdog.manage(db, project_dir)
             return

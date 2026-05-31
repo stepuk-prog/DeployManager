@@ -11,8 +11,8 @@ from logs import get_logger
 logger = get_logger(__name__)
 
 
-def _ask(prompt: str, default: str | None = None) -> str:
-    return ui.ask(prompt, default or "")
+async def _ask(prompt: str, default: str | None = None) -> str:
+    return await ui.ask(prompt, default or "")
 
 
 async def _pick_author(db: Database) -> int | None:
@@ -24,7 +24,7 @@ async def _pick_author(db: Database) -> int | None:
         print(f"    [{i}] {a['name'] or '?'} ({a['telegram_name'] or '—'})  id={a['author']}  "
               f"использован в {a['used']} прогр.")
     while True:
-        sel = _ask("  Выбор автора (номер, пусто — без автора)", "")
+        sel = await _ask("  Выбор автора (номер, пусто — без автора)", "")
         if sel == "":
             return None
         if sel.isdigit() and 1 <= int(sel) <= len(authors):
@@ -36,13 +36,13 @@ async def create_record_interactive(db: Database, service_name: str | None = Non
                                      folder: str | None = None) -> bool:
     """Создать запись programdata. service_name/folder — предзаполнены из файла (если есть)."""
     print("\n── Создание записи program.programdata ──")
-    service_name = _ask("  service_name", service_name)
+    service_name = await _ask("  service_name", service_name)
     if not service_name:
         print("  service_name пуст — отмена.")
         return False
-    folder = _ask("  folder", folder)
-    description = _ask("  description", "")
-    program_name = _ask("  program_name", "")
+    folder = await _ask("  folder", folder)
+    description = await _ask("  description", "")
+    program_name = await _ask("  program_name", "")
     author = await _pick_author(db)
 
     program_id = await db.next_program_id()
@@ -50,7 +50,7 @@ async def create_record_interactive(db: Database, service_name: str | None = Non
     print(f"        description={description or 'NULL'}  program_name={program_name or 'NULL'}  "
           f"author={author or 'NULL'}")
     print("        (флаги status/dispatcher/… = false, боты/cookies = NULL — дозаполнить отдельно)")
-    if _ask("  Создать запись? [y/N]", "N").lower() != "y":
+    if (await _ask("  Создать запись? [y/N]", "N")).lower() != "y":
         print("  Отменено.")
         return False
     await db.create_program(program_id, service_name, folder or None,

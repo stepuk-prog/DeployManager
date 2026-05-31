@@ -15,21 +15,46 @@ def set_mode(interactive: bool, assume_yes: bool = False) -> None:
     ASSUME_YES = assume_yes
 
 
-def ask(prompt: str, default: str = "") -> str:
-    """Запросить строку. В неинтерактиве — вернуть default без ввода."""
+def _has_tty() -> bool:
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def _input(prompt: str) -> str:
+    """input() с защитой от EOF/битой кодировки (не валим программу)."""
+    try:
+        return input(prompt).strip()
+    except (EOFError, UnicodeDecodeError):
+        return ""
+
+
+async def ask(prompt: str, default: str = "") -> str:
+    """Запросить строку. Корутина: в TTY — через questionary (единый IO, не мешаем с
+    raw-режимом prompt_toolkit); без TTY — input(); в неинтерактиве — default."""
     if not INTERACTIVE:
         return default
-    suffix = f" [{default}]" if default else ""
-    return input(f"{prompt}{suffix}: ").strip() or default
+    if _has_tty():
+        try:
+            import questionary
+            ans = await questionary.text(prompt, default=default).ask_async()
+            return (ans if ans is not None else default).strip() or default
+        except Exception:
+            pass
+    return _input(f"{prompt}{(' [' + default + ']') if default else ''}: ") or default
 
 
-def confirm(prompt: str) -> bool:
-    """Да/нет. --yes → True; неинтерактив без --yes → False (безопасный отказ)."""
+async def confirm(prompt: str) -> bool:
+    """Да/нет. --yes → True; неинтерактив без --yes → False. В TTY — questionary.confirm."""
     if ASSUME_YES:
         return True
     if not INTERACTIVE:
         return False
-    return input(f"{prompt} [y/N]: ").strip().lower() == "y"
+    if _has_tty():
+        try:
+            import questionary
+            return bool(await questionary.confirm(prompt, default=False).ask_async())
+        except Exception:
+            pass
+    return _input(f"{prompt} [y/N]: ").lower() == "y"
 
 
 def _checkbox_text(title: str, labels: list[str]) -> list[int]:
@@ -37,7 +62,7 @@ def _checkbox_text(title: str, labels: list[str]) -> list[int]:
     print(title)
     for i, lab in enumerate(labels, 1):
         print(f"  [{i}] {lab}")
-    raw = input("Номера через запятую / 'all': ").strip()
+    raw = _input("Номера через запятую / 'all': ")
     if raw.lower() == "all":
         return list(range(len(labels)))
     return [int(t) - 1 for t in raw.replace(" ", "").split(",")
@@ -57,7 +82,7 @@ async def checkbox(title: str, labels: list[str], default_all: bool = False) -> 
         return []
     if not INTERACTIVE:
         return list(range(len(labels))) if (ASSUME_YES or default_all) else []
-    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+    if not _has_tty():
         print("(терминал без TTY — чек-боксы недоступны; включи «Emulate terminal in "
               "output console» в IDE или запусти в обычном терминале)")
         return _checkbox_text(title, labels)

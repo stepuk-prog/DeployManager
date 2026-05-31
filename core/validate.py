@@ -103,14 +103,14 @@ def _set_venv(svc: LocalService, old: str, new: str) -> None:
     logger.info("Файл %s: venv %s → %s в ExecStart", svc.name, old, new)
 
 
-def _check_venv(svc: LocalService) -> None:
+async def _check_venv(svc: LocalService) -> None:
     """ExecStart должен указывать на серверный venv (config.VENV_DIR, обычно 'venv', не '.venv')."""
     vd = svc.venv_dir
     if not vd or vd == config.VENV_DIR:
         return
     print(f"  {svc.name:26} ⚠️ ExecStart использует venv '{vd}', "
           f"а на серверах ожидается '{config.VENV_DIR}'")
-    ans = ui.ask(f"      [f] исправить (/{vd}/bin → /{config.VENV_DIR}/bin) / [s] оставить", "s").lower()
+    ans = (await ui.ask(f"      [f] исправить (/{vd}/bin → /{config.VENV_DIR}/bin) / [s] оставить", "s")).lower()
     if ans == "f":
         _set_venv(svc, vd, config.VENV_DIR)
         print("      ✅ Исправлено.")
@@ -118,14 +118,14 @@ def _check_venv(svc: LocalService) -> None:
         print("      ⏭️  Оставлено как есть.")
 
 
-def _check_restart(svc: LocalService) -> None:
+async def _check_restart(svc: LocalService) -> None:
     """Restart должен быть выключен под Dispatcher. При включённом — предупредить и спросить."""
     if not svc.restart_enabled:
         return
     print(f"  {svc.name:26} ⚠️ Restart={svc.restart} (включён)")
     print("      Под Dispatcher автоперезапуск systemd должен быть ВЫКЛЮЧЕН (Restart=no):")
     print("      иначе systemd сам поднимет упавший сервис и сломает failover диспетчера.")
-    ans = ui.ask("      [f] исправить (Restart=no) / [s] оставить", "s").lower()
+    ans = (await ui.ask("      [f] исправить (Restart=no) / [s] оставить", "s")).lower()
     if ans == "f":
         _set_restart_no(svc)
         print("      ✅ Исправлено.")
@@ -151,8 +151,8 @@ async def validate_paths(db: Database, project_dir: str) -> bool:
     print("\n── Валидация service-файлов ↔ programdata ──")
     all_ok = True
     for svc in local:
-        _check_venv(svc)     # ExecStart → серверный venv (не .venv)
-        _check_restart(svc)  # Restart должен быть выключен под Dispatcher (для всех юнитов)
+        await _check_venv(svc)     # ExecStart → серверный venv (не .venv)
+        await _check_restart(svc)  # Restart должен быть выключен под Dispatcher (для всех юнитов)
         if svc.is_template:
             print(f"  {svc.name:26} — шаблон (в БД не проверяется)")
             continue
@@ -186,7 +186,7 @@ async def _resolve_missing(db: Database, svc: LocalService) -> bool:
         print(f"      [n] создать запись сейчас (service_name={svc.name}, folder={svc.working_dir})")
         print("      [o] добавить отдельно/позже (продолжить деплой без записи)")
         print("      [a] отмена деплоя")
-        ans = ui.ask("    Выбор [n/o/a]", "a").lower()
+        ans = (await ui.ask("    Выбор [n/o/a]", "a")).lower()
         if ans == "n":
             await create_record_interactive(db, service_name=svc.name, folder=svc.working_dir)
             return True
@@ -207,7 +207,7 @@ async def _resolve_mismatch(db: Database, svc: LocalService, rec) -> bool:
         print(f"      [f] файл → записать путь из БД ({rec['folder']}) в service-файл")
         print("      [s] пропустить (оставить как есть)")
         print("      [a] отмена деплоя")
-        ans = ui.ask("    Выбор [d/f/s/a]", "a").lower()
+        ans = (await ui.ask("    Выбор [d/f/s/a]", "a")).lower()
         if ans == "d":
             await db.update_program_folder(rec["program_id"], _norm(svc.working_dir))
             print("    ✅ БД обновлена.")

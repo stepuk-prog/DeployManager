@@ -40,7 +40,7 @@ async def manage(db: Database, project_dir: str, command: str | None = None,
     print("\nПрограммы проекта:")
     for i, r in enumerate(records, 1):
         print(f"  [{i}] {r['service_name']}")
-    sel = ui.ask("Программа (номер)", "1")
+    sel = await ui.ask("Программа (номер)", "1")
     if not (sel.isdigit() and 1 <= int(sel) <= len(records)):
         print("Неверный выбор программы.")
         return
@@ -63,7 +63,7 @@ async def manage(db: Database, project_dir: str, command: str | None = None,
         print("Ноды не выбраны.")
         return
 
-    command = command or ui.ask(f"Команда {'/'.join(ALLOWED)}", "restart")
+    command = command or await ui.ask(f"Команда {'/'.join(ALLOWED)}", "restart")
     if command not in ALLOWED:
         print(f"Команда должна быть из {ALLOWED}.")
         return
@@ -71,8 +71,8 @@ async def manage(db: Database, project_dir: str, command: str | None = None,
     for b in chosen:
         node = b["server_name"] or b["ip_address"]
         if command in ("stop", "restart") and b["status"] == "leader":
-            if not ui.confirm(f"  ⚠️ {node} — leader. '{command}' остановит/перезапустит РАБОТАЮЩИЙ "
-                              f"сервис. Продолжить?"):
+            if not await ui.confirm(f"  ⚠️ {node} — leader. '{command}' остановит/перезапустит "
+                                    f"РАБОТАЮЩИЙ сервис. Продолжить?"):
                 print(f"  ⏭️  {node} пропущен")
                 continue
         iid = await db.queue_instruction(rec["service_name"], command, b["node_id"], source="dm")

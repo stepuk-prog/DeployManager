@@ -27,7 +27,7 @@ async def uninstall(ssh: SshClient, db: Database, project_dir: str, preselect: s
     print("\nПрограммы проекта:")
     for i, r in enumerate(records, 1):
         print(f"  [{i}] {r['service_name']}  (folder={r['folder']})")
-    sel = ui.ask("Какую деинсталлировать (номер)", "1")
+    sel = await ui.ask("Какую деинсталлировать (номер)", "1")
     if not (sel.isdigit() and 1 <= int(sel) <= len(records)):
         print("Неверный выбор.")
         return
@@ -52,7 +52,7 @@ async def uninstall(ssh: SshClient, db: Database, project_dir: str, preselect: s
         print("Ноды не выбраны.")
         return
 
-    rm_folder = ui.confirm(f"Удалять также папку проекта на ноде (rm -rf {folder or '—'})?") if folder else False
+    rm_folder = (await ui.confirm(f"Удалять также папку проекта на ноде (rm -rf {folder or '—'})?")) if folder else False
     unit_path = shlex.quote(os.path.join(config.SYSTEMD_DIR, unit))
 
     for b in chosen:
@@ -60,8 +60,8 @@ async def uninstall(ssh: SshClient, db: Database, project_dir: str, preselect: s
         ip = b["ip_address"]
         if b["status"] == "leader":
             print(f"  ⚠️⚠️ {node} — АКТИВНЫЙ leader для {unit}!")
-        if not ui.confirm(f"  Деинсталлировать {unit} с {node}"
-                          f"{' + удалить папку' if rm_folder else ''}? Необратимо."):
+        if not await ui.confirm(f"  Деинсталлировать {unit} с {node}"
+                                f"{' + удалить папку' if rm_folder else ''}? Необратимо."):
             print(f"  ⏭️  {node} пропущен")
             continue
 
