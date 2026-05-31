@@ -112,6 +112,43 @@ class Database:
         )
         return "inserted" if row["inserted"] else f"kept:{row['status']}"
 
+    async def update_service_state(self, service_id: int, node_id: int,
+                                   running: bool, systemd_error: str | None) -> None:
+        """Записать фактическое состояние сервиса на ноде (только существующая привязка;
+        leader/standby не трогаем)."""
+        await self._conn.execute(
+            "UPDATE dispatcher.service_status "
+            "SET running = $3, systemd_error = $4, last_running_update = now() "
+            "WHERE service_id = $1 AND node_id = $2",
+            service_id, node_id, running, systemd_error,
+        )
+
+    # ----- управление через диспетчер (dispatcher.watchdog_instruction) -----
+    async def queue_instruction(self, service_name: str, command: str, node_id: int,
+                                source: str = "dm") -> int:
+        """Поставить инструкцию watchdog'у (start/stop/restart). Исполняет агент на ноде.
+        source='dm' — отличаем от 'gd' (GlobalDispatcher). Возвращает instruction_id."""
+        return await self._conn.fetchval(
+            "INSERT INTO dispatcher.watchdog_instruction (service_name, command, node_id, source) "
+            "VALUES ($1, $2, $3, $4) RETURNING instruction_id",
+            service_name, command, node_id, source,
+        )
+
+    async def get_instruction(self, instruction_id: int) -> asyncpg.Record | None:
+        """Состояние инструкции (для ожидания результата)."""
+        return await self._conn.fetchrow(
+            "SELECT is_executed, executed_at, result FROM dispatcher.watchdog_instruction "
+            "WHERE instruction_id = $1",
+            instruction_id,
+        )
+
+    async def unbind_service_node(self, service_id: int, node_id: int) -> str:
+        """Снять привязку сервиса к ноде (deinstall). Возвращает тег команды (напр. 'DELETE 1')."""
+        return await self._conn.execute(
+            "DELETE FROM dispatcher.service_status WHERE service_id = $1 AND node_id = $2",
+            service_id, node_id,
+        )
+
     async def get_service_bindings(self, service_id: int) -> list[asyncpg.Record]:
         """Все привязки сервиса к нодам (для отчёта)."""
         return await self._conn.fetch(
