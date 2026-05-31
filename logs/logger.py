@@ -5,12 +5,26 @@ import sys
 _FMT = "%(asctime)s %(levelname)-7s %(message)s"
 
 
+class _StdoutProxy:
+    """Пишет в ТЕКУЩИЙ sys.stdout. В GUI он перенаправлен в лог-панель, поэтому
+    логгер (INFO/ошибки SSH/БД) попадает и туда, а не только в терминал."""
+
+    def write(self, s):
+        return sys.stdout.write(s)
+
+    def flush(self):
+        try:
+            sys.stdout.flush()
+        except Exception:
+            pass
+
+
 def get_logger(name: str = "deploy") -> logging.Logger:
     logger = logging.getLogger(name)
     if logger.handlers:
         return logger
     logger.setLevel(logging.INFO)
-    handler = logging.StreamHandler(sys.stdout)
+    handler = logging.StreamHandler(_StdoutProxy())
     handler.setFormatter(logging.Formatter(_FMT, "%H:%M:%S"))
     logger.addHandler(handler)
     logger.propagate = False
