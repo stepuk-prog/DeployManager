@@ -25,7 +25,7 @@ logger = get_logger("cli")
 
 # Три основные ветки + служебные действия для автоматизации.
 _ACTION_MAP = {"new": "1", "add": "2", "check": "3", "dashboard": "3", "status": "3",
-               "create": "create", "state": "state"}
+               "create": "create", "state": "state", "manage": "manage"}
 
 
 def _ask(prompt: str, default: str = "") -> str:
@@ -319,6 +319,11 @@ async def run(args=None):
             from core import state
             await state.check_state(ssh, db, project_dir)
             return
+        if action == "manage":     # служебное: start/stop/restart через watchdog диспетчера
+            from core import watchdog
+            await watchdog.manage(db, project_dir, command=getattr(args, "command", None),
+                                  preselect=preselect)
+            return
 
         remote_folder, local_svcs, linked_ips, records = await _resolve_remote_folder(db, project_dir)
         if not remote_folder:
@@ -326,12 +331,15 @@ async def run(args=None):
             return
         print(f"Путь установки на серверах: {remote_folder}")
 
-        if action == "3":   # ── проверить версии (дашборд + опц. state-check) ──
+        if action == "3":   # ── проверить версии (дашборд + опц. state-check + управление) ──
             from core import dashboard
             await dashboard.show(ssh, db, project_dir, local)
             if ui.confirm("\nОбновить фактическое состояние (running) в БД по нодам?"):
                 from core import state
                 await state.check_state(ssh, db, project_dir)
+            if ui.confirm("Управление сервисом (start/stop/restart через диспетчер)?"):
+                from core import watchdog
+                await watchdog.manage(db, project_dir)
             return
 
         nodes = await db.get_online_nodes()

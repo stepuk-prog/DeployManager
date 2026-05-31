@@ -9,9 +9,11 @@ def _parse_args():
     p = argparse.ArgumentParser(description="DeployManager — деплой проектов на ноды")
     p.add_argument("--project", help="папка проекта (по умолчанию спросит/cwd)")
     p.add_argument("--action",
-                   choices=["new", "add", "check", "create", "state"],
+                   choices=["new", "add", "check", "create", "state", "manage"],
                    help="ветка без меню: new (с нуля) / add (добавить сервер) / "
-                        "check (версии) / create / state")
+                        "check (версии) / create / state / manage")
+    p.add_argument("--command", choices=["start", "stop", "restart"],
+                   help="для --action manage: команда сервису через watchdog")
     p.add_argument("--nodes", help="ноды: 'all' или список имён/ip/номеров через запятую")
     p.add_argument("--dry-run", action="store_true", dest="dry_run", help="предпросмотр без изменений")
     p.add_argument("--yes", action="store_true", help="неинтерактивно: не спрашивать, безопасные дефолты")

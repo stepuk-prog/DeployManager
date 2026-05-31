@@ -123,6 +123,25 @@ class Database:
             service_id, node_id, running, systemd_error,
         )
 
+    # ----- управление через диспетчер (dispatcher.watchdog_instruction) -----
+    async def queue_instruction(self, service_name: str, command: str, node_id: int,
+                                source: str = "dm") -> int:
+        """Поставить инструкцию watchdog'у (start/stop/restart). Исполняет агент на ноде.
+        source='dm' — отличаем от 'gd' (GlobalDispatcher). Возвращает instruction_id."""
+        return await self._conn.fetchval(
+            "INSERT INTO dispatcher.watchdog_instruction (service_name, command, node_id, source) "
+            "VALUES ($1, $2, $3, $4) RETURNING instruction_id",
+            service_name, command, node_id, source,
+        )
+
+    async def get_instruction(self, instruction_id: int) -> asyncpg.Record | None:
+        """Состояние инструкции (для ожидания результата)."""
+        return await self._conn.fetchrow(
+            "SELECT is_executed, executed_at, result FROM dispatcher.watchdog_instruction "
+            "WHERE instruction_id = $1",
+            instruction_id,
+        )
+
     async def get_service_bindings(self, service_id: int) -> list[asyncpg.Record]:
         """Все привязки сервиса к нодам (для отчёта)."""
         return await self._conn.fetch(
