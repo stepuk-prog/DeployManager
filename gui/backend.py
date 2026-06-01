@@ -9,6 +9,18 @@ import asyncio
 import flet as ft
 
 
+def _ok_button(text: str, on_click) -> ft.Button:
+    """Позитивная кнопка подтверждения (Да/OK) — светло-зелёная, чёрный текст."""
+    return ft.Button(content=ft.Text(text, color=ft.Colors.BLACK),
+                     bgcolor=ft.Colors.LIGHT_GREEN_400, on_click=on_click)
+
+
+def _no_button(text: str, on_click) -> ft.Button:
+    """Кнопка отрицания (Нет/Отмена) — приглушённый (не яркий) красный, чёрный текст."""
+    return ft.Button(content=ft.Text(text, color=ft.Colors.BLACK),
+                     bgcolor=ft.Colors.RED_200, on_click=on_click)
+
+
 def _title_with_close(text: str, on_close) -> ft.Row:
     """Заголовок диалога с крестиком закрытия справа (всегда виден, даже у длинных окон)."""
     return ft.Row(
@@ -32,7 +44,7 @@ class FletUi:
 
         self.page.show_dialog(ft.AlertDialog(
             modal=True, title=ft.Text(prompt), content=field,
-            actions=[ft.Button(content=ft.Text("✅ OK"), on_click=ok)]))
+            actions=[_ok_button("✅ OK", ok)]))
         return await fut
 
     async def confirm(self, prompt: str, danger: bool = False) -> bool:
@@ -53,11 +65,11 @@ class FletUi:
         else:
             title = ft.Text("Подтверждение")
             content = ft.Text(prompt, width=440)
-            yes = ft.Button(content=ft.Text("✅ Да"), on_click=done(True))
+            yes = _ok_button("✅ Да", done(True))
 
         self.page.show_dialog(ft.AlertDialog(
             modal=True, title=title, content=content,
-            actions=[yes, ft.Button(content=ft.Text("✖️ Нет"), on_click=done(False))]))
+            actions=[yes, _no_button("✖️ Нет", done(False))]))
         return await fut
 
     async def select(self, title: str, labels: list[str], default_index: int = 0) -> int | None:
@@ -72,7 +84,7 @@ class FletUi:
                 self.page.pop_dialog()
             return h
 
-        cancel = ft.TextButton(content=ft.Text("✖️ Отмена"), on_click=choose(None))
+        cancel = _no_button("✖️ Отмена", choose(None))
         header = _title_with_close("Выбор", choose(None))   # крестик всегда виден вверху
         compact = len(labels) <= 4 and all(len(lab) <= 24 for lab in labels)
         if compact:                                    # варианты — кнопками в ряд
@@ -117,8 +129,8 @@ class FletUi:
         self.page.show_dialog(ft.AlertDialog(
             modal=True, title=_title_with_close("Выбор программы", finish(None)),
             content=ft.Column([ft.Text(title), dd], tight=True, spacing=10, width=540),
-            actions=[ft.TextButton(content=ft.Text("✖️ Отмена"), on_click=finish(None)),
-                     ft.Button(content=ft.Text("✅ OK"), on_click=ok)],
+            actions=[_no_button("✖️ Отмена", finish(None)),
+                     _ok_button("✅ OK", ok)],
             actions_alignment=ft.MainAxisAlignment.END))
         return await fut
 
@@ -140,7 +152,7 @@ class FletUi:
             height=min(360, 64 + 34 * len(boxes)))
         self.page.show_dialog(ft.AlertDialog(
             modal=True, title=_title_with_close("Выбор нод", finish(True)), content=content,
-            actions=[ft.TextButton(content=ft.Text("✖️ Отмена"), on_click=finish(True)),
-                     ft.Button(content=ft.Text("✅ OK"), on_click=finish(False))],
+            actions=[_no_button("✖️ Отмена", finish(True)),
+                     _ok_button("✅ OK", finish(False))],
             actions_alignment=ft.MainAxisAlignment.END))
         return await fut

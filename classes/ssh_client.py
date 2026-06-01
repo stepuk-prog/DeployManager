@@ -35,9 +35,12 @@ class SshClient:
         async with self._locks[key]:
             conn = self._conns.get(key)
             if conn is None:
+                # отдельный ключ для PRIV_USER, если задан PRIV_KEY (ключ root в другом месте)
+                key_file = (config.PRIV_KEY if config.PRIV_KEY and config.PRIV_USER
+                            and user == config.PRIV_USER else config.SSH_KEY)
                 conn = await asyncssh.connect(
                     host=host, port=config.SSH_PORT, username=user,
-                    client_keys=[config.SSH_KEY], known_hosts=None,
+                    client_keys=[key_file], known_hosts=None,
                     connect_timeout=config.SSH_CONNECT_TIMEOUT,
                 )
                 self._conns[key] = conn

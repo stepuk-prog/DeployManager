@@ -1,4 +1,11 @@
-"""Перенаправление stdout ядра (print) в лог-панель Flet (построчно)."""
+"""Перенаправление stdout ядра (print) в лог-панель Flet (построчно).
+
+Цвет: базовый — на всю строку (отчёты деплоя: ✅ успех / ❌ провал / ⚠️ предупреждение).
+Поверх — пер-значение (span'ы) для статуса привязки (leader/standby/unavailable),
+run-state (active/inactive/…) и рассинхрона версий — каждое значение своим цветом в строке.
+"""
+import re
+
 import flet as ft
 
 
@@ -28,13 +35,13 @@ class LogSink:
         self._buf = ""
         self._update()
 
-    # красный: провал/конфуз + КЛЮЧЕВОЕ предупреждение (двойное ⚠️⚠️, напр. leader)
+    # базовый цвет всей строки (отчёты деплоя). красный — ловит ⚠️⚠️ до одиночного ⚠️
     _RED = ("❌", "⛔", "‼️", "🛑", "FAILED", "Ошибка", "ошибка", "⚠️⚠️")
-    _AMBER = ("⚠️", "stale", "DIRTY")   # обычные (мелкие) предупреждения
+    _AMBER = ("⚠️", "stale", "DIRTY")
 
     @staticmethod
-    def _color(line: str):
-        if any(m in line for m in LogSink._RED):       # сначала красный — ловит ⚠️⚠️ до ⚠️
+    def _base_color(line: str):
+        if any(m in line for m in LogSink._RED):
             return ft.Colors.RED
         if "✅" in line or "up-to-date" in line:
             return ft.Colors.GREEN
@@ -42,9 +49,54 @@ class LogSink:
             return ft.Colors.AMBER
         return None  # цвет по умолчанию (тема)
 
+    # пер-значение (приоритет: больше — важнее при наложении).
+    # зелёный — норма (leader / запущен / актуальная версия);
+    # янтарный — внимание (standby / остановлен / отстаёт); красный — плохо (unavailable / сбой).
+    _TOKENS = [
+        (r"\bleader\b", ft.Colors.GREEN, 1),
+        (r"▶ active|▶ running|up-to-date", ft.Colors.GREEN, 1),
+        (r"\bstandby\b", ft.Colors.AMBER, 1),
+        (r"■ inactive|■ stopped|✗ inactive", ft.Colors.AMBER, 1),
+        (r"отстаёт|впереди|разошлись|нет VERSION|вне истории|версия неизвестна",
+         ft.Colors.AMBER, 1),
+        (r"\bunavailable\b", ft.Colors.RED, 2),
+        (r"✗ (?!inactive)\w+", ft.Colors.RED, 2),
+    ]
+
+    @classmethod
+    def _spans(cls, line: str):
+        """Список TextSpan с пер-значение цветом (или None, если красить нечего)."""
+        base = cls._base_color(line)
+        hits = []
+        for pat, color, prio in cls._TOKENS:
+            for m in re.finditer(pat, line):
+                hits.append((m.start(), m.end(), color, prio))
+        if not hits:
+            return None
+        hits.sort(key=lambda h: (h[0], -h[3]))         # по позиции; при равной — важнее вперёд
+        chosen, last = [], -1
+        for s, e, color, _ in hits:
+            if s >= last:                              # неперекрывающиеся
+                chosen.append((s, e, color))
+                last = e
+        spans, idx = [], 0
+        for s, e, color in chosen:
+            if s > idx:
+                spans.append(ft.TextSpan(line[idx:s], ft.TextStyle(color=base)))
+            spans.append(ft.TextSpan(line[s:e], ft.TextStyle(color=color)))
+            idx = e
+        if idx < len(line):
+            spans.append(ft.TextSpan(line[idx:], ft.TextStyle(color=base)))
+        return spans
+
     def _emit(self, line: str) -> None:
-        self.view.controls.append(ft.Text(line or " ", selectable=True, font_family="monospace",
-                                          size=12, color=self._color(line)))
+        line = line or " "
+        spans = self._spans(line)
+        base = self._base_color(line)
+        txt = (ft.Text(spans=spans, selectable=True, font_family="monospace", size=12, color=base)
+               if spans else
+               ft.Text(line, selectable=True, font_family="monospace", size=12, color=base))
+        self.view.controls.append(txt)
         self._update()
 
     def _update(self) -> None:

@@ -47,7 +47,8 @@ async def manage(db: Database, project_dir: str, command: str | None = None,
     if not bindings:
         print("У программы нет привязок к нодам (dispatcher.service_status).")
         return
-    labels = [f"{(b['server_name'] or b['ip_address']):16} [{b['status']}] running={b['running']}"
+    labels = [f"{(b['server_name'] or b['ip_address']):16} rang={b['rang']!s:>4} "
+              f"[{b['status']}] running={b['running']}"
               for b in bindings]
     if preselect:
         idxs = (list(range(len(bindings))) if preselect.lower() == "all"

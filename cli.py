@@ -384,12 +384,10 @@ async def run(args=None):
             return
         print(f"Путь установки на серверах: {remote_folder}")
 
-        if action == "3":   # ── проверить версии (дашборд + опц. state-check + управление) ──
-            from core import dashboard
-            await dashboard.show(ssh, db, project_dir, local)
-            if await ui.confirm("\nОбновить фактическое состояние (running) в БД по нодам?"):
-                from core import state
-                await state.check_state(ssh, db, project_dir)
+        if action == "3":   # ── проверить версии (state-check + дашборд + опц. управление) ──
+            from core import dashboard, state
+            await state.check_state(ssh, db, project_dir)   # сперва опрос нод → свежий running в БД
+            await dashboard.show(ssh, db, project_dir, local)  # дашборд уже с фактическим состоянием
             if await ui.confirm("Управление сервисом (start/stop/restart через диспетчер)?"):
                 from core import watchdog
                 await watchdog.manage(db, project_dir)

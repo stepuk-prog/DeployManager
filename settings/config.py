@@ -26,6 +26,10 @@ SSH_CONNECT_TIMEOUT = int(os.getenv("SSH_CONNECT_TIMEOUT", "10"))
 # Пользователь для привилегированных шагов (юниты в /etc, systemctl). Если задан
 # (напр. root) — вход под ним без sudo; пусто — текущий SSH_USER + passwordless sudo.
 PRIV_USER = os.getenv("PRIV_USER", "")
+# Отдельный приватный ключ для PRIV_USER (если ключ root лежит в другом месте, не как у vova).
+# Пусто — используется общий SSH_KEY.
+_priv_key = os.getenv("PRIV_KEY", "").strip()
+PRIV_KEY = str(Path(_priv_key).expanduser()) if _priv_key else ""
 
 # ----- systemd -----
 SYSTEMD_DIR = "/etc/systemd/system"

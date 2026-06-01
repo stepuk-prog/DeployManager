@@ -199,7 +199,7 @@ class Database:
     async def get_service_bindings(self, service_id: int) -> list[asyncpg.Record]:
         """Все привязки сервиса к нодам (для отчёта)."""
         return await self._conn.fetch(
-            "SELECT ss.node_id, ss.status, ss.running, n.server_name, n.ip_address "
+            "SELECT ss.node_id, ss.status, ss.running, n.server_name, n.ip_address, n.rang "
             "FROM dispatcher.service_status ss "
             "JOIN vocabulary.nodes n ON n.id = ss.node_id "
             "WHERE ss.service_id = $1 ORDER BY ss.status, n.server_name",
