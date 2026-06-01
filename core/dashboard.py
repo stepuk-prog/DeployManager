@@ -40,7 +40,9 @@ def _lag(project_dir: str, node_commit: str, local_commit: str) -> str:
     return f"разошлись (−{behind}/+{ahead})"
 
 
-async def show(ssh: SshClient, db: Database, project_dir: str, local) -> None:
+async def show(ssh: SshClient, db: Database, project_dir: str, local) -> list[dict]:
+    """Печатает дашборд и возвращает список отставших/разошедшихся нод (версия != локальной)
+    в формате [{ip, name, commit, lag}] — для предложения синхронизации."""
     svcs = list_local_services(project_dir)
     names = [s.name for s in svcs if not s.is_template]
     records = await db.find_programs_by_service(names)
@@ -48,7 +50,8 @@ async def show(ssh: SshClient, db: Database, project_dir: str, local) -> None:
           f"{' DIRTY' if local.dirty else ''} ══")
     if not records:
         print("  Программы проекта не найдены в programdata.")
-        return
+        return []
+    stale: dict[str, dict] = {}                       # ip → инфо (одна нода — один раз)
     for rec in records:
         folder = (rec["folder"] or "").rstrip("/")
         bindings = await db.get_service_bindings(rec["program_id"])
@@ -66,6 +69,10 @@ async def show(ssh: SshClient, db: Database, project_dir: str, local) -> None:
                 vinfo = "нет VERSION"
             else:
                 nc = man.get("commit", "")
-                vinfo = f"{man.get('short') or nc[:9]} · {_lag(project_dir, nc, local.commit)}"
+                lag = _lag(project_dir, nc, local.commit)
+                vinfo = f"{man.get('short') or nc[:9]} · {lag}"
+                if nc and nc != local.commit and ip not in stale:
+                    stale[ip] = {"ip": ip, "name": node, "commit": nc, "lag": lag}
             run = "▶ running" if b["running"] else "■ stopped"
             print(f"    {node:16} {b['status']:11} {run:10} {vinfo}")
+    return list(stale.values())

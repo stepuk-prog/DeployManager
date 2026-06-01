@@ -394,10 +394,19 @@ async def run(args=None):
                                           records, dry_run=dry_run)
             return
 
-        if action == "3":   # ── проверить версии (state-check + дашборд + опц. управление) ──
+        if action == "3":   # ── проверить версии (state-check + дашборд + опц. синхронизация/управление) ──
             from core import dashboard, state
             await state.check_state(ssh, db, project_dir)   # сперва опрос нод → свежий running в БД
-            await dashboard.show(ssh, db, project_dir, local)  # дашборд уже с фактическим состоянием
+            stale = await dashboard.show(ssh, db, project_dir, local)  # дашборд + список отставших нод
+            if stale:
+                names = ", ".join(f"{s['name']}({s['lag']})" for s in stale)
+                if await ui.confirm(
+                        f"Обнаружен рассинхрон версий на {len(stale)} нод(ах): {names}.\n"
+                        f"Синхронизировать их до локальной {local.short}?", danger=True):
+                    from core import update
+                    nodes = await db.get_online_nodes()
+                    await update.update(ssh, db, project_dir, remote_folder, local_svcs,
+                                        records, local, nodes, stale, dry_run=dry_run)
             if await ui.confirm("Управление сервисом (start/stop/restart через диспетчер)?"):
                 from core import watchdog
                 await watchdog.manage(db, project_dir)
