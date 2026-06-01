@@ -25,7 +25,8 @@ logger = get_logger("cli")
 
 # Три основные ветки + служебные действия для автоматизации.
 _ACTION_MAP = {"new": "1", "add": "2", "check": "3", "dashboard": "3", "status": "3",
-               "create": "create", "state": "state", "manage": "manage", "uninstall": "uninstall"}
+               "create": "create", "state": "state", "manage": "manage", "uninstall": "uninstall",
+               "sync": "sync", "env": "sync"}
 
 
 async def _ask(prompt: str, default: str = "") -> str:
@@ -357,7 +358,10 @@ async def run(args=None):
             "  [1] деплой нового проекта (с нуля на чистые серверы)\n"
             "  [2] добавить сервер к существующему деплою\n"
             "  [3] проверить версии на серверах (vs локальной)\n"
+            "  [4] обновить .env / service-файлы на серверах (без передеплоя)\n"
             "  [q] выход\nВыбор", "1")
+        if action == "4":
+            action = "sync"
         if action == "q":
             return
         if action == "create":   # служебное (для автоматизации)
@@ -383,6 +387,12 @@ async def run(args=None):
             print("🛑 Путь установки не задан — выходим.")
             return
         print(f"Путь установки на серверах: {remote_folder}")
+
+        if action == "sync":   # обновить .env / service-файлы на нодах без передеплоя
+            from core import sync_config
+            await sync_config.sync_config(ssh, db, project_dir, remote_folder, local_svcs,
+                                          records, dry_run=dry_run)
+            return
 
         if action == "3":   # ── проверить версии (state-check + дашборд + опц. управление) ──
             from core import dashboard, state

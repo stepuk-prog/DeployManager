@@ -35,6 +35,8 @@ class Deployer:
         if config.RSYNC_DELETE:
             cmd.append("--delete")
         cmd += ["-e", ssh_cmd]
+        for inc in config.RSYNC_INCLUDES:       # include ПЕРЕД exclude (первое правило выигрывает)
+            cmd.append(f"--include={inc}")
         for ex in config.RSYNC_EXCLUDES:
             cmd.append(f"--exclude={ex}")
         cmd += [src, dst]
@@ -51,6 +53,66 @@ class Deployer:
             print(f"  [{host}] изменения rsync:\n" +
                   ("\n".join("      " + l for l in changes.splitlines()) if changes else "      (нет)"))
         return True
+
+    async def sync_env(self, host: str, project_dir: str, remote_folder: str,
+                       dry_run: bool = False) -> bool:
+        """Залить ТОЛЬКО локальный .env → remote_folder/.env (обновление настроек без передеплоя)."""
+        src = os.path.join(project_dir.rstrip("/"), ".env")
+        if not os.path.isfile(src):
+            logger.error(".env не найден локально: %s", src)
+            return False
+        folder = remote_folder.rstrip("/")
+        if not dry_run:
+            mk = await self.ssh.run(host, f"mkdir -p {shlex.quote(folder)}", timeout=15)
+            if not mk.ok:
+                logger.error("mkdir %s FAILED: %s", host, mk.stderr or mk.stdout)
+                return False
+        dst = f"{config.SSH_USER}@{host}:{folder}/.env"
+        ssh_cmd = (f"ssh -i {config.SSH_KEY} -p {config.SSH_PORT} "
+                   f"-o StrictHostKeyChecking=accept-new -o ConnectTimeout={config.SSH_CONNECT_TIMEOUT}")
+        cmd = ["rsync", "-az"] + (["-n", "-i"] if dry_run else []) + ["-e", ssh_cmd, src, dst]
+        logger.info("sync .env%s → %s:%s/.env", " (dry-run)" if dry_run else "", host, folder)
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        _out, err = await proc.communicate()
+        if proc.returncode != 0:
+            logger.error("sync_env %s FAILED (%s): %s", host, proc.returncode,
+                         (err or b"").decode(errors="replace").strip())
+            return False
+        return True
+
+    async def sync_units(self, host: str, project_dir: str, remote_folder: str,
+                         service_files: list[str], dry_run: bool = False) -> bool:
+        """Обновить service-файлы: rsync локальных systemd/* → remote_folder/systemd,
+        затем install_services (cp в /etc/systemd/system + daemon-reload под root)."""
+        if not service_files:
+            return True
+        folder = remote_folder.rstrip("/")
+        local_sd = os.path.join(project_dir.rstrip("/"), "systemd")
+        if not os.path.isdir(local_sd):
+            logger.error("нет локальной папки systemd/: %s", local_sd)
+            return False
+        if not dry_run:
+            mk = await self.ssh.run(host, f"mkdir -p {shlex.quote(folder + '/systemd')}", timeout=15)
+            if not mk.ok:
+                logger.error("mkdir %s FAILED: %s", host, mk.stderr or mk.stdout)
+                return False
+        dst = f"{config.SSH_USER}@{host}:{folder}/systemd/"
+        ssh_cmd = (f"ssh -i {config.SSH_KEY} -p {config.SSH_PORT} "
+                   f"-o StrictHostKeyChecking=accept-new -o ConnectTimeout={config.SSH_CONNECT_TIMEOUT}")
+        cmd = (["rsync", "-az"] + (["-n", "-i"] if dry_run else [])
+               + ["-e", ssh_cmd, local_sd.rstrip("/") + "/", dst])
+        logger.info("sync юниты%s → %s:%s/systemd", " (dry-run)" if dry_run else "", host, folder)
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        _out, err = await proc.communicate()
+        if proc.returncode != 0:
+            logger.error("sync_units %s FAILED (%s): %s", host, proc.returncode,
+                         (err or b"").decode(errors="replace").strip())
+            return False
+        if dry_run:
+            return True
+        return await self.install_services(host, remote_folder, service_files)  # cp в /etc + daemon-reload
 
     async def install_services(self, host: str, remote_folder: str, service_files: list[str]) -> bool:
         """sudo cp юнитов из remote_folder/systemd в /etc/systemd/system + daemon-reload."""

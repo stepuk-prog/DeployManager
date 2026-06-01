@@ -30,6 +30,9 @@ PRIV_USER = os.getenv("PRIV_USER", "")
 # Пусто — используется общий SSH_KEY.
 _priv_key = os.getenv("PRIV_KEY", "").strip()
 PRIV_KEY = str(Path(_priv_key).expanduser()) if _priv_key else ""
+# Пароли к зашифрованным ключам (если ключ под passphrase). Пусто — ключ без пароля.
+SSH_KEY_PASSPHRASE = os.getenv("SSH_KEY_PASSPHRASE", "") or None
+PRIV_KEY_PASSPHRASE = os.getenv("PRIV_KEY_PASSPHRASE", "") or None
 
 # ----- systemd -----
 SYSTEMD_DIR = "/etc/systemd/system"
@@ -38,11 +41,19 @@ SERVICE_GLOB = "*.service"
 
 # ----- rsync -----
 # Что НЕ переносить на сервер. .env НЕ исключаем — его деплоим обязательно (.env.example — нет).
+# ВАЖНО: в logs/ и files/ лежат и ИСХОДНИКИ пакета (logs/*.py, files/.gitkeep — нужны приложению),
+# и рантайм (*.log, *.session). Режем именно рантайм:
+#   *.log      — любые логи (раньше было logs/* — срезало и logs/__init__.py → краш `import logs`);
+#   *.session  — сессии (Telethon-авторизация ноды); приложения работают и без них, не деплоим;
+#   files/*    — прочий рантайм files/ (кроме .gitkeep — он в RSYNC_INCLUDES, чтобы папка создалась).
 RSYNC_EXCLUDES = [
-    ".git", ".venv", "venv", "logs/*", "files/*",
+    ".git", ".venv", "venv", "*.log", "*.session", "files/*",
     "__pycache__", "*.pyc", ".idea", "pictures/new",
     "*.md", ".env.example",
 ]
+# Что вернуть обратно, даже если попало под exclude (структурный маркер рантайм-папки files/).
+# --include идут ПЕРЕД --exclude (rsync: первое совпавшее правило выигрывает).
+RSYNC_INCLUDES = ["files/.gitkeep"]
 RSYNC_DELETE = os.getenv("RSYNC_DELETE", "0").strip().lower() in ("1", "true", "yes", "on")
 
 # Имя файла-манифеста версии на сервере (git SHA + метаданные деплоя).

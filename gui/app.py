@@ -91,6 +91,7 @@ async def main(page: ft.Page):
             branch("➕ Добавить сервер", "add"),
             branch("🔍 Проверить версии", "check"),
             branch("🎛️ Управление", "manage"),
+            branch("♻️ Обновить .env/юниты", "sync"),
             branch("🗑️ Деинсталляция", "uninstall"),
         ], wrap=True),
         ft.Row([ft.TextButton(content=ft.Text("🧹 Очистить лог"),

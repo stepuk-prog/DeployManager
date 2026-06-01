@@ -37,10 +37,11 @@ def deployed_files(project_dir: str) -> list[str]:
     """Относительные пути файлов, которые попадают на сервер (для сверки)."""
     out = subprocess.run(["git", "-C", project_dir, "ls-files"],
                          capture_output=True, text=True, timeout=15).stdout
+    includes = set(config.RSYNC_INCLUDES)          # вернулись через --include, несмотря на exclude
     files = []
     for f in out.splitlines():
         f = f.strip()
-        if not f or _rsync_excluded(f, config.RSYNC_EXCLUDES):
+        if not f or (_rsync_excluded(f, config.RSYNC_EXCLUDES) and f not in includes):
             continue
         files.append(f)
     if os.path.isfile(os.path.join(project_dir, ".env")) and not _rsync_excluded(".env", config.RSYNC_EXCLUDES):

@@ -29,6 +29,27 @@ class SshClient:
         # ключ кэша — (user, host): один пользователь может ходить под vova, другой под root
         self._conns: dict[tuple[str, str], asyncssh.SSHClientConnection] = {}
         self._locks: dict[tuple[str, str], asyncio.Lock] = defaultdict(asyncio.Lock)
+        self._keys: dict[str, asyncssh.SSHKey] = {}   # кэш загруженных приватных ключей по пути
+
+    def _load_key(self, path: str, passphrase, label: str) -> asyncssh.SSHKey:
+        """Прочитать приватный ключ с понятной ошибкой (какой ключ/путь и вероятная причина)."""
+        cached = self._keys.get(path)
+        if cached is not None:
+            return cached
+        try:
+            key = asyncssh.read_private_key(path, passphrase=passphrase)
+        except FileNotFoundError:
+            raise RuntimeError(f"файл ключа не найден: {label}={path}") from None
+        except asyncssh.KeyImportError as e:
+            msg = str(e)
+            if "passphrase" in msg.lower():
+                raise RuntimeError(
+                    f"ключ {label}={path} зашифрован паролем — задай {label}_PASSPHRASE в .env") from None
+            raise RuntimeError(
+                f"ключ {label}={path} не читается ({msg}). Нужен НЕшифрованный приватный ключ "
+                f"в формате OpenSSH/PEM (не .pub, не PuTTY .ppk, не повреждённый)") from None
+        self._keys[path] = key
+        return key
 
     async def _get(self, host: str, user: str) -> asyncssh.SSHClientConnection:
         key = (user, host)
@@ -36,11 +57,14 @@ class SshClient:
             conn = self._conns.get(key)
             if conn is None:
                 # отдельный ключ для PRIV_USER, если задан PRIV_KEY (ключ root в другом месте)
-                key_file = (config.PRIV_KEY if config.PRIV_KEY and config.PRIV_USER
-                            and user == config.PRIV_USER else config.SSH_KEY)
+                use_priv = config.PRIV_KEY and config.PRIV_USER and user == config.PRIV_USER
+                key_file = config.PRIV_KEY if use_priv else config.SSH_KEY
+                label = "PRIV_KEY" if use_priv else "SSH_KEY"
+                passphrase = config.PRIV_KEY_PASSPHRASE if use_priv else config.SSH_KEY_PASSPHRASE
+                client_key = self._load_key(key_file, passphrase, label)
                 conn = await asyncssh.connect(
                     host=host, port=config.SSH_PORT, username=user,
-                    client_keys=[key_file], known_hosts=None,
+                    client_keys=[client_key], known_hosts=None,
                     connect_timeout=config.SSH_CONNECT_TIMEOUT,
                 )
                 self._conns[key] = conn
