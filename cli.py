@@ -137,8 +137,29 @@ async def _preflight(ssh: SshClient, targets: list, remote_folder: str,
     return approved
 
 
+async def _report_units(ssh: SshClient, targets: list, results: list,
+                        service_files: list[str]) -> None:
+    """Per-node подтверждение: service-файлы реально лежат в /etc/systemd/system."""
+    ok_nodes = [t for t, r in zip(targets, results) if r.ok]
+    if not ok_nodes or not service_files:
+        return
+    print("\n── Установка юнитов (/etc/systemd/system) ──")
+    for node in ok_nodes:
+        ip = node["ip_address"]
+        name = node["server_name"] or node["hostname"]
+        present, missing = [], []
+        for sf in service_files:
+            (present if await ssh.path_exists(ip, f"{config.SYSTEMD_DIR}/{sf}") else missing).append(sf)
+        if not missing:
+            print(f"  {name:16} ✅ скопирован: {', '.join(present)}")
+        else:
+            ok_part = f"скопирован: {', '.join(present)}; " if present else ""
+            print(f"  {name:16} ❌ {ok_part}НЕ скопирован: {', '.join(missing)}")
+
+
 async def _bind_and_report(db: Database, records: list, targets: list, results: list) -> None:
-    """Привязать сервисы к успешно задеплоенным нодам (status=standby) + отчёт."""
+    """Привязать сервисы к успешно задеплоенным нодам (status=standby) + per-node отчёт
+    (добавлена / уже была / ошибка)."""
     if not records:
         print("\n(нет записей в programdata — привязки в dispatcher.service_status не пишем)")
         return
@@ -148,11 +169,18 @@ async def _bind_and_report(db: Database, records: list, targets: list, results: 
         return
     print("\n── Привязка сервисов к нодам (dispatcher.service_status) ──")
     for rec in records:
+        print(f"  {rec['service_name']}")
         for node in ok_nodes:
-            await db.bind_service_node(rec["program_id"], node["id"], status="standby")
-        bindings = await db.get_service_bindings(rec["program_id"])
-        parts = [f"{b['server_name'] or b['ip_address']}[{b['status']}]" for b in bindings]
-        print(f"  {rec['service_name']:24} → {', '.join(parts) if parts else '—'}")
+            name = node["server_name"] or node["hostname"]
+            try:
+                res = await db.bind_service_node(rec["program_id"], node["id"], status="standby")
+            except Exception as e:                      # noqa: BLE001 — отчитаться, не падать
+                print(f"    {name:16} ❌ не записалась: {e}")
+                continue
+            if res == "inserted":
+                print(f"    {name:16} ✅ добавлена [standby]")
+            else:                                       # 'kept:<status>' — строка уже была
+                print(f"    {name:16} • уже была [{res.split(':', 1)[1]}]")
 
 
 def _node_flags(step: str) -> tuple[bool, bool]:
@@ -289,6 +317,7 @@ async def _deploy_flow(db: Database, ssh: SshClient, project_dir: str, local,
         print("\nСухой прогон — изменений не внесено (provision/юниты/привязки/VERSION пропущены).")
         return
 
+    await _report_units(ssh, targets, results, service_files)
     await _bind_and_report(db, records, targets, results)
     await _verify_nodes(ssh, targets, results, remote_folder, project_dir)
     status_mod.print_status(local, await status_mod.check_status(ssh, targets, remote_folder, local))

@@ -38,12 +38,14 @@ class FletUi:
             return h
 
         self.page.show_dialog(ft.AlertDialog(
-            modal=True, title=ft.Text(prompt),
+            modal=True, title=ft.Text("Подтверждение"),
+            content=ft.Text(prompt, width=440),
             actions=[ft.Button(content=ft.Text("Да"), on_click=done(True)),
                      ft.Button(content=ft.Text("Нет"), on_click=done(False))]))
         return await fut
 
     async def select(self, title: str, labels: list[str], default_index: int = 0) -> int | None:
+        """Компактный диалог: пояснение + кнопки-варианты в ряд + «Отмена» (→ None)."""
         fut = asyncio.get_running_loop().create_future()
 
         def choose(idx):
@@ -53,23 +55,33 @@ class FletUi:
                 self.page.pop_dialog()
             return h
 
-        btns = [ft.Button(content=ft.Text(lab), on_click=choose(i)) for i, lab in enumerate(labels)]
+        actions = [ft.Button(content=ft.Text(lab), on_click=choose(i)) for i, lab in enumerate(labels)]
+        actions.append(ft.TextButton(content=ft.Text("Отмена"), on_click=choose(None)))
         self.page.show_dialog(ft.AlertDialog(
-            modal=True, title=ft.Text(title),
-            content=ft.Column(btns, scroll=ft.ScrollMode.AUTO, tight=True, width=600, height=420)))
+            modal=True, title=ft.Text("Выбор"),
+            content=ft.Text(title, width=440),
+            actions=actions, actions_alignment=ft.MainAxisAlignment.END))
         return await fut
 
     async def checkbox(self, title: str, labels: list[str], default_all: bool = False) -> list[int]:
+        """Компактный диалог-список: пояснение + чек-боксы + «OK»/«Отмена» в ряд."""
         fut = asyncio.get_running_loop().create_future()
         boxes = [ft.Checkbox(label=lab, value=default_all) for lab in labels]
 
-        def ok(_):
-            if not fut.done():
-                fut.set_result([i for i, b in enumerate(boxes) if b.value])
-            self.page.pop_dialog()
+        def finish(cancel):
+            def h(_):
+                if not fut.done():
+                    fut.set_result([] if cancel else [i for i, b in enumerate(boxes) if b.value])
+                self.page.pop_dialog()
+            return h
 
+        content = ft.Column(
+            [ft.Text(title), *boxes],
+            scroll=ft.ScrollMode.AUTO, tight=True, spacing=6, width=440,
+            height=min(360, 64 + 34 * len(boxes)))
         self.page.show_dialog(ft.AlertDialog(
-            modal=True, title=ft.Text(title),
-            content=ft.Column(boxes, scroll=ft.ScrollMode.AUTO, tight=True, width=560, height=400),
-            actions=[ft.Button(content=ft.Text("OK"), on_click=ok)]))
+            modal=True, title=ft.Text("Выбор нод"), content=content,
+            actions=[ft.TextButton(content=ft.Text("Отмена"), on_click=finish(True)),
+                     ft.Button(content=ft.Text("OK"), on_click=finish(False))],
+            actions_alignment=ft.MainAxisAlignment.END))
         return await fut

@@ -93,6 +93,9 @@ async def main(page: ft.Page):
             branch("Управление", "manage"),
             branch("Деинсталляция", "uninstall"),
         ], wrap=True),
+        ft.Row([ft.TextButton(content=ft.Text("Очистить лог"),
+                              on_click=lambda _: sink.clear())],
+               alignment=ft.MainAxisAlignment.END),
         ft.Container(content=log_view, expand=True, padding=8,
                      border=ft.Border.all(1, ft.Colors.GREY), border_radius=6),
     )

@@ -1,9 +1,12 @@
 """Пост-деплой хэш-сверка: файлы на ноде идентичны локальным (целостность rsync).
 
-Сверяется набор реально задеплоенных файлов = git-tracked минус невыгружаемые (`*.md`,
-`.env.example`, `pictures/new/`) плюс `.env` (он деплоится, но не в git). По каждому файлу
-sha256 локально и на ноде (`sha256sum`), сравнение.
+Сверяется набор реально задеплоенных файлов = git-tracked минус то, что rsync исключает
+(`config.RSYNC_EXCLUDES` — те же правила, что при выгрузке: `logs/*`, `files/*`, `*.md`, …),
+плюс `.env` (он деплоится, но не в git). По каждому файлу sha256 локально и на ноде
+(`sha256sum`), сравнение. Список исключений ОБЯЗАН совпадать с rsync — иначе невыгруженные
+файлы дают ложные `[missing]`.
 """
+import fnmatch
 import hashlib
 import os
 import shlex
@@ -11,8 +14,23 @@ import subprocess
 
 from classes.ssh_client import SshClient
 from logs import get_logger
+from settings import config
 
 logger = get_logger(__name__)
+
+
+def _rsync_excluded(rel: str, excludes: list[str]) -> bool:
+    """Попадает ли путь под правило исключения rsync (та же семантика, что у `--exclude`)."""
+    parts = rel.split("/")
+    for pat in excludes:
+        if "/" in pat:                                  # anchored: путь от корня переноса
+            if fnmatch.fnmatch(rel, pat):               # logs/* → logs/__init__.py, logs/sub/x.py
+                return True
+            if rel == pat or rel.startswith(pat + "/"):  # каталог целиком (pictures/new и его содержимое)
+                return True
+        elif any(fnmatch.fnmatch(p, pat) for p in parts):  # unanchored: любой компонент (*.md, __pycache__)
+            return True
+    return False
 
 
 def deployed_files(project_dir: str) -> list[str]:
@@ -22,12 +40,10 @@ def deployed_files(project_dir: str) -> list[str]:
     files = []
     for f in out.splitlines():
         f = f.strip()
-        if not f:
-            continue
-        if f.endswith(".md") or os.path.basename(f) == ".env.example" or f.startswith("pictures/new/"):
+        if not f or _rsync_excluded(f, config.RSYNC_EXCLUDES):
             continue
         files.append(f)
-    if os.path.isfile(os.path.join(project_dir, ".env")):
+    if os.path.isfile(os.path.join(project_dir, ".env")) and not _rsync_excluded(".env", config.RSYNC_EXCLUDES):
         files.append(".env")
     return sorted(set(files))
 

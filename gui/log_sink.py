@@ -22,6 +22,12 @@ class LogSink:
             self._emit(self._buf)
             self._buf = ""
 
+    def clear(self) -> None:
+        """Очистить лог-панель (кнопка «Очистить лог»)."""
+        self.view.controls.clear()
+        self._buf = ""
+        self._update()
+
     # красный: провал/конфуз + КЛЮЧЕВОЕ предупреждение (двойное ⚠️⚠️, напр. leader)
     _RED = ("❌", "⛔", "‼️", "🛑", "FAILED", "Ошибка", "ошибка", "⚠️⚠️")
     _AMBER = ("⚠️", "stale", "DIRTY")   # обычные (мелкие) предупреждения
