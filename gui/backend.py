@@ -9,6 +9,14 @@ import asyncio
 import flet as ft
 
 
+def _title_with_close(text: str, on_close) -> ft.Row:
+    """Заголовок диалога с крестиком закрытия справа (всегда виден, даже у длинных окон)."""
+    return ft.Row(
+        [ft.Text(text, weight=ft.FontWeight.BOLD, expand=True),
+         ft.IconButton(icon=ft.Icons.CLOSE, tooltip="Закрыть", on_click=on_close)],
+        alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
+
+
 class FletUi:
     def __init__(self, page: ft.Page):
         self.page = page
@@ -24,10 +32,10 @@ class FletUi:
 
         self.page.show_dialog(ft.AlertDialog(
             modal=True, title=ft.Text(prompt), content=field,
-            actions=[ft.Button(content=ft.Text("OK"), on_click=ok)]))
+            actions=[ft.Button(content=ft.Text("✅ OK"), on_click=ok)]))
         return await fut
 
-    async def confirm(self, prompt: str) -> bool:
+    async def confirm(self, prompt: str, danger: bool = False) -> bool:
         fut = asyncio.get_running_loop().create_future()
 
         def done(val):
@@ -37,15 +45,24 @@ class FletUi:
                 self.page.pop_dialog()
             return h
 
+        if danger:
+            title = ft.Text("⚠️ Внимание", color=ft.Colors.RED, weight=ft.FontWeight.BOLD)
+            content = ft.Text(prompt, width=440, color=ft.Colors.RED)
+            yes = ft.Button(content=ft.Text("🗑️ Да", color=ft.Colors.WHITE),
+                            bgcolor=ft.Colors.RED, on_click=done(True))
+        else:
+            title = ft.Text("Подтверждение")
+            content = ft.Text(prompt, width=440)
+            yes = ft.Button(content=ft.Text("✅ Да"), on_click=done(True))
+
         self.page.show_dialog(ft.AlertDialog(
-            modal=True, title=ft.Text("Подтверждение"),
-            content=ft.Text(prompt, width=440),
-            actions=[ft.Button(content=ft.Text("Да"), on_click=done(True)),
-                     ft.Button(content=ft.Text("Нет"), on_click=done(False))]))
+            modal=True, title=title, content=content,
+            actions=[yes, ft.Button(content=ft.Text("✖️ Нет"), on_click=done(False))]))
         return await fut
 
     async def select(self, title: str, labels: list[str], default_index: int = 0) -> int | None:
-        """Компактный диалог: пояснение + кнопки-варианты в ряд + «Отмена» (→ None)."""
+        """Выбор одного варианта (→ индекс / None при отмене). Мало коротких вариантов —
+        кнопки в ряд; много/длинные — прокручиваемый вертикальный список."""
         fut = asyncio.get_running_loop().create_future()
 
         def choose(idx):
@@ -55,12 +72,54 @@ class FletUi:
                 self.page.pop_dialog()
             return h
 
-        actions = [ft.Button(content=ft.Text(lab), on_click=choose(i)) for i, lab in enumerate(labels)]
-        actions.append(ft.TextButton(content=ft.Text("Отмена"), on_click=choose(None)))
+        cancel = ft.TextButton(content=ft.Text("✖️ Отмена"), on_click=choose(None))
+        header = _title_with_close("Выбор", choose(None))   # крестик всегда виден вверху
+        compact = len(labels) <= 4 and all(len(lab) <= 24 for lab in labels)
+        if compact:                                    # варианты — кнопками в ряд
+            actions = [ft.Button(content=ft.Text(lab), on_click=choose(i))
+                       for i, lab in enumerate(labels)]
+            actions.append(cancel)
+            dialog = ft.AlertDialog(
+                modal=True, title=header, content=ft.Text(title, width=440),
+                actions=actions, actions_alignment=ft.MainAxisAlignment.END)
+        else:                                          # длинный список — вертикально, со скроллом
+            items = [ft.Text(title)] + [
+                ft.Button(content=ft.Text(lab, text_align=ft.TextAlign.LEFT),
+                          on_click=choose(i), width=560)
+                for i, lab in enumerate(labels)]
+            content = ft.Column(items, scroll=ft.ScrollMode.AUTO, tight=True, spacing=4,
+                                width=580, height=min(440, 60 + 42 * len(labels)))
+            dialog = ft.AlertDialog(
+                modal=True, title=header, content=content,
+                actions=[cancel], actions_alignment=ft.MainAxisAlignment.END)
+        self.page.show_dialog(dialog)
+        return await fut
+
+    async def combobox(self, title: str, labels: list[str], default_index: int = 0) -> int | None:
+        """Выбор одного варианта выпадающим списком (combobox) + «OK»/«Отмена»/крестик."""
+        fut = asyncio.get_running_loop().create_future()
+        default = default_index if 0 <= default_index < len(labels) else 0
+        dd = ft.Dropdown(
+            options=[ft.dropdown.Option(key=str(i), text=lab) for i, lab in enumerate(labels)],
+            value=str(default), width=520)
+
+        def finish(idx):
+            def h(_):
+                if not fut.done():
+                    fut.set_result(idx)
+                self.page.pop_dialog()
+            return h
+
+        def ok(_):
+            v = dd.value
+            finish(int(v) if v is not None and v.isdigit() else None)(_)
+
         self.page.show_dialog(ft.AlertDialog(
-            modal=True, title=ft.Text("Выбор"),
-            content=ft.Text(title, width=440),
-            actions=actions, actions_alignment=ft.MainAxisAlignment.END))
+            modal=True, title=_title_with_close("Выбор программы", finish(None)),
+            content=ft.Column([ft.Text(title), dd], tight=True, spacing=10, width=540),
+            actions=[ft.TextButton(content=ft.Text("✖️ Отмена"), on_click=finish(None)),
+                     ft.Button(content=ft.Text("✅ OK"), on_click=ok)],
+            actions_alignment=ft.MainAxisAlignment.END))
         return await fut
 
     async def checkbox(self, title: str, labels: list[str], default_all: bool = False) -> list[int]:
@@ -80,8 +139,8 @@ class FletUi:
             scroll=ft.ScrollMode.AUTO, tight=True, spacing=6, width=440,
             height=min(360, 64 + 34 * len(boxes)))
         self.page.show_dialog(ft.AlertDialog(
-            modal=True, title=ft.Text("Выбор нод"), content=content,
-            actions=[ft.TextButton(content=ft.Text("Отмена"), on_click=finish(True)),
-                     ft.Button(content=ft.Text("OK"), on_click=finish(False))],
+            modal=True, title=_title_with_close("Выбор нод", finish(True)), content=content,
+            actions=[ft.TextButton(content=ft.Text("✖️ Отмена"), on_click=finish(True)),
+                     ft.Button(content=ft.Text("✅ OK"), on_click=finish(False))],
             actions_alignment=ft.MainAxisAlignment.END))
         return await fut

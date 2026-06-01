@@ -176,6 +176,17 @@ class Database:
             result, commit, operator, json.dumps(details) if details is not None else None,
         )
 
+    async def journal_programs(self) -> list[asyncpg.Record]:
+        """Программы, засветившиеся в журнале деплоя (что ставили этим инструментом) и ещё
+        существующие в programdata. Поля как у list_programs + last_ts. Свежие — выше."""
+        return await self._conn.fetch(
+            "SELECT p.program_id, p.service_name, p.folder, p.status, p.dispatcher, "
+            "p.program_name, max(j.ts) AS last_ts "
+            "FROM dispatcher.deploy_journal j "
+            "JOIN program.programdata p ON p.program_id = j.program_id "
+            "GROUP BY p.program_id, p.service_name, p.folder, p.status, p.dispatcher, p.program_name "
+            "ORDER BY last_ts DESC")
+
     async def journal_recent(self, program_id: int) -> list[asyncpg.Record]:
         """Последнее состояние журнала по каждой ноде для программы (для поиска «по журналу»)."""
         return await self._conn.fetch(

@@ -84,16 +84,16 @@ async def main(page: ft.Page):
         return btn
 
     page.add(
-        ft.Row([path_field, ft.Button(content=ft.Text("Обзор…"), on_click=choose_project)]),
+        ft.Row([path_field, ft.Button(content=ft.Text("📂 Обзор…"), on_click=choose_project)]),
         ft.Row([ft.Text("Версия:"), version_lbl]),
         ft.Row([
-            branch("Деплой с нуля", "new"),
-            branch("Добавить сервер", "add"),
-            branch("Проверить версии", "check"),
-            branch("Управление", "manage"),
-            branch("Деинсталляция", "uninstall"),
+            branch("🚀 Деплой с нуля", "new"),
+            branch("➕ Добавить сервер", "add"),
+            branch("🔍 Проверить версии", "check"),
+            branch("🎛️ Управление", "manage"),
+            branch("🗑️ Деинсталляция", "uninstall"),
         ], wrap=True),
-        ft.Row([ft.TextButton(content=ft.Text("Очистить лог"),
+        ft.Row([ft.TextButton(content=ft.Text("🧹 Очистить лог"),
                               on_click=lambda _: sink.clear())],
                alignment=ft.MainAxisAlignment.END),
         ft.Container(content=log_view, expand=True, padding=8,

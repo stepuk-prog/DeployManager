@@ -22,27 +22,34 @@ from settings import config
 logger = get_logger(__name__)
 
 
+async def _pick_one(progs: list, prompt: str):
+    """Выбор одной программы из списка (combobox по program_name) → ([rec], folder)."""
+    if not progs:
+        print("Ничего не найдено.")
+        return None, None
+    labels = [f"{p['program_name'] or p['service_name'] or '?'}  ·  {p['service_name'] or '?'}  "
+              f"[{'АКТИВНА' if p['status'] else 'выкл'}, disp={'on' if p['dispatcher'] else 'off'}]"
+              for p in progs]
+    idx = await ui.combobox(prompt, labels)
+    if idx is None:
+        return None, None
+    rec = progs[idx]
+    return [rec], (rec["folder"] or "").rstrip("/")
+
+
 async def _pick_targets(db: Database, project_dir: str):
     """Возвращает (список программ, общая папка) либо (None, None)."""
-    mode = await ui.select("Как искать программу",
-                           ["по service-файлам проекта (весь проект)", "из БД (одна программа)"])
+    mode = await ui.select("Как искать программу", [
+        "по service-файлам проекта (весь проект)",
+        "из БД (одна программа)",
+        "из журнала деплоя (что ставили этим инструментом)",
+    ])
     if mode is None:
         return None, None
-    if mode == 1:
-        progs = await db.list_programs()
-        flt = (await ui.ask("Фильтр по имени (пусто — все)", "")).strip().lower()
-        progs = [p for p in progs if not flt or flt in (p["service_name"] or "").lower()
-                 or flt in (p["program_name"] or "").lower()]
-        if not progs:
-            print("Ничего не найдено.")
-            return None, None
-        labels = [f"{p['service_name'] or '?'}  [{'АКТИВНА' if p['status'] else 'выкл'}, "
-                  f"disp={'on' if p['dispatcher'] else 'off'}]  {p['program_name'] or ''}" for p in progs]
-        idx = await ui.select("Программа для деинсталляции", labels)
-        if idx is None:
-            return None, None
-        rec = progs[idx]
-        return [rec], (rec["folder"] or "").rstrip("/")
+    if mode == 1:                                       # из БД — все записи programdata
+        return await _pick_one(await db.list_programs(), "Программа для деинсталляции (по имени):")
+    if mode == 2:                                       # из журнала — только что деплоили
+        return await _pick_one(await db.journal_programs(), "Программа из журнала деплоя:")
 
     records = await db.find_programs_by_service(
         [s.name for s in list_local_services(project_dir) if not s.is_template])
@@ -133,7 +140,11 @@ async def uninstall(ssh: SshClient, db: Database, project_dir: str, preselect: s
                                        details={"node": node, "rm_folder": rm_folder})
 
     # опц. удаление записей из programdata (каскадно)
-    if await ui.confirm(f"Удалить {len(programs)} запис(ь/и) проекта из programdata (каскадно)?"):
+    if await ui.confirm(
+        f"Удалить {len(programs)} запис(ь/и) проекта из programdata?\n"
+        "Каскадное удаление сотрёт ВСЮ информацию о данной программе (привязки, "
+        "настройки, логи и т.д.). Действие НЕОБРАТИМО.",
+        danger=True):
         for p in programs:
             await db.delete_program(p["program_id"])
             await db.journal_write(p["program_id"], None, "uninstall", False, False, True,

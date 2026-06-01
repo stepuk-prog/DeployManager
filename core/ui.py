@@ -53,10 +53,11 @@ async def ask(prompt: str, default: str = "") -> str:
     return _input(f"{prompt}{(' [' + default + ']') if default else ''}: ") or default
 
 
-async def confirm(prompt: str) -> bool:
-    """Да/нет. GUI-бэкенд → диалог; иначе --yes/неинтерактив/questionary/input."""
+async def confirm(prompt: str, danger: bool = False) -> bool:
+    """Да/нет. GUI-бэкенд → диалог; иначе --yes/неинтерактив/questionary/input.
+    danger=True — деструктивная операция: в GUI «Да» красная + красный текст-предупреждение."""
     if _BACKEND is not None:
-        return bool(await _BACKEND.confirm(prompt))
+        return bool(await _BACKEND.confirm(prompt, danger=danger))
     if ASSUME_YES:
         return True
     if not INTERACTIVE:
@@ -68,6 +69,16 @@ async def confirm(prompt: str) -> bool:
         except Exception:
             pass
     return _input(f"{prompt} [y/N]: ").lower() == "y"
+
+
+async def combobox(title: str, labels: list[str], default_index: int = 0) -> int | None:
+    """Выбор одного варианта через выпадающий список (combobox). GUI → ft.Dropdown;
+    без GUI — поведение как у select() (questionary/ввод номера). → индекс или None."""
+    if not labels:
+        return None
+    if _BACKEND is not None and hasattr(_BACKEND, "combobox"):
+        return await _BACKEND.combobox(title, labels, default_index)
+    return await select(title, labels, default_index)
 
 
 async def select(title: str, labels: list[str], default_index: int = 0) -> int | None:
