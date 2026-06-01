@@ -8,7 +8,9 @@
 watchdog, чтобы изменения применились.
 """
 import getpass
+import hashlib
 import os
+import shlex
 from datetime import datetime
 
 from classes.deployer import Deployer
@@ -16,8 +18,25 @@ from classes.ssh_client import SshClient
 from core import audit, ui
 from database import Database
 from logs import get_logger
+from settings import config
 
 logger = get_logger(__name__)
+
+
+def _sha_local(path: str) -> str | None:
+    if not os.path.isfile(path):
+        return None
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+async def _sha_remote(ssh: SshClient, ip: str, path: str) -> str | None:
+    res = await ssh.run(ip, f"sha256sum -- {shlex.quote(path)} 2>/dev/null", timeout=15)
+    parts = res.stdout.split() if res.ok and res.stdout else []
+    return parts[0] if parts else None
 
 
 async def sync_config(ssh: SshClient, db: Database, project_dir: str, remote_folder: str,
@@ -57,24 +76,36 @@ async def sync_config(ssh: SshClient, db: Database, project_dir: str, remote_fol
         return
 
     deployer = Deployer(ssh)
+    env_local = _sha_local(env_path) if do_env else None
+    units_local = ({sf: _sha_local(os.path.join(project_dir.rstrip("/"), "systemd", sf))
+                    for sf in service_files} if do_units else {})
     results = []
+    changed_nodes = 0
     for ip, name in items:
         if not await ssh.ping(ip):
             print(f"  {name:16} 🔌 недоступна — пропускаю")
-            results.append((name, ip, False, False))
+            results.append((name, ip, None, None))
             continue
-        env_ok = (await deployer.sync_env(ip, project_dir, remote_folder, dry_run=dry_run)
-                  if do_env else None)
-        units_ok = (await deployer.sync_units(ip, project_dir, remote_folder, service_files, dry_run=dry_run)
-                    if do_units else None)
-        marks = []
-        if do_env:
-            marks.append("✅ .env" if env_ok else "❌ .env")
-        if do_units:
-            marks.append("✅ юниты+reload" if units_ok else "❌ юниты")
+        marks, env_res, units_res = [], None, None
+        if do_env:                                       # сверяем хэш — не трогаем идентичный .env
+            if await _sha_remote(ssh, ip, f"{remote_folder.rstrip('/')}/.env") == env_local:
+                marks.append("• .env актуален"); env_res = "same"
+            else:
+                ok = await deployer.sync_env(ip, project_dir, remote_folder, dry_run=dry_run)
+                marks.append("✅ .env обновлён" if ok else "❌ .env"); env_res = ok
+        if do_units:                                     # сверяем каждый юнит с /etc/systemd/system
+            diff = [sf for sf, lh in units_local.items()
+                    if await _sha_remote(ssh, ip, f"{config.SYSTEMD_DIR}/{sf}") != lh]
+            if not diff:
+                marks.append("• юниты актуальны"); units_res = "same"
+            else:
+                ok = await deployer.sync_units(ip, project_dir, remote_folder, service_files, dry_run=dry_run)
+                marks.append(f"✅ юниты+reload ({len(diff)})" if ok else "❌ юниты"); units_res = ok
+        if env_res is True or units_res is True:
+            changed_nodes += 1
         tail = " (dry-run)" if dry_run else ""
         print(f"  {name:16} {'  '.join(marks)}{tail}")
-        results.append((name, ip, env_ok, units_ok))
+        results.append((name, ip, env_res, units_res))
 
     audit.write({
         "action": "sync_config", "ts": datetime.now().isoformat(timespec="seconds"),
@@ -86,6 +117,10 @@ async def sync_config(ssh: SshClient, db: Database, project_dir: str, remote_fol
     if dry_run:
         print("\nСухой прогон — изменений не внесено.")
         return
-    if await ui.confirm("Перезапустить сервис на нодах (через watchdog), чтобы применить изменения?"):
+    if not changed_nodes:
+        print("\nВсё уже актуально — ничего не меняли, перезапуск не нужен.")
+        return
+    if await ui.confirm(f"Изменено нод: {changed_nodes}. Перезапустить сервис на них "
+                        "(через watchdog), чтобы применить изменения?"):
         from core import watchdog
         await watchdog.manage(db, project_dir, command="restart")

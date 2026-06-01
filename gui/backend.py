@@ -62,14 +62,17 @@ class FletUi:
             content = ft.Text(prompt, width=440, color=ft.Colors.RED)
             yes = ft.Button(content=ft.Text("🗑️ Да", color=ft.Colors.WHITE),
                             bgcolor=ft.Colors.RED, on_click=done(True))
+            # в опасном диалоге «Нет» — безопасный выход, не алармим: нейтрально-серая
+            no = ft.Button(content=ft.Text("✖️ Нет", color=ft.Colors.BLACK),
+                           bgcolor=ft.Colors.GREY_400, on_click=done(False))
         else:
             title = ft.Text("Подтверждение")
             content = ft.Text(prompt, width=440)
             yes = _ok_button("✅ Да", done(True))
+            no = _no_button("✖️ Нет", done(False))
 
         self.page.show_dialog(ft.AlertDialog(
-            modal=True, title=title, content=content,
-            actions=[yes, _no_button("✖️ Нет", done(False))]))
+            modal=True, title=title, content=content, actions=[yes, no]))
         return await fut
 
     async def select(self, title: str, labels: list[str], default_index: int = 0) -> int | None:
