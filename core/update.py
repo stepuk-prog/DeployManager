@@ -10,7 +10,7 @@ from datetime import datetime
 
 from classes.deployer import Deployer
 from classes.ssh_client import SshClient
-from core import audit, deploy as deploy_mod, provision as provision_mod, ui
+from core import audit, deploy as deploy_mod, ui
 from database import Database
 from logs import get_logger
 from settings import config
@@ -46,16 +46,13 @@ async def update(ssh: SshClient, db: Database, project_dir: str, remote_folder: 
         print("🛑 Отменено.")
         return
 
-    extra_cmds: list[str] = []
-    if config.PROVISION:
-        for pkg, cmd in provision_mod.detect_post_install(project_dir):
-            if await ui.confirm(f"В requirements есть '{pkg}' — выполнить '{cmd}' на нодах?"):
-                extra_cmds.append(cmd)
-
+    # При обновлении пост-установки (playwright install и т.п.) НЕ предлагаем: браузер уже стоит
+    # на ноде с первичного деплоя. provision сделает только venv + pip install -r (если изменились
+    # зависимости). Переустановка тяжёлых пакетов — отдельно, при первичном деплое/add.
     results = await deploy_mod.deploy(
         ssh, Deployer(ssh), targets, project_dir, remote_folder, service_files, local,
         deployed_by=getpass.getuser(), deployed_at=datetime.now().isoformat(timespec="seconds"),
-        extra_cmds=extra_cmds, dry_run=dry_run)
+        extra_cmds=[], dry_run=dry_run)
     deploy_mod.print_deploy_results(results)
 
     if dry_run:
