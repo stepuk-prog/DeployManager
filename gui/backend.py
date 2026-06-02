@@ -137,10 +137,14 @@ class FletUi:
             actions_alignment=ft.MainAxisAlignment.END))
         return await fut
 
-    async def checkbox(self, title: str, labels: list[str], default_all: bool = False) -> list[int]:
-        """Компактный диалог-список: пояснение + чек-боксы + «OK»/«Отмена» в ряд."""
+    async def checkbox(self, title: str, labels: list[str], default_all: bool = False,
+                       default_checked: list[bool] | None = None) -> list[int]:
+        """Компактный диалог-список: пояснение + чек-боксы + «OK»/«Отмена» в ряд.
+        default_checked — по-элементная предотметка (напр. ноды, где программа уже стоит)."""
         fut = asyncio.get_running_loop().create_future()
-        boxes = [ft.Checkbox(label=lab, value=default_all) for lab in labels]
+        checked = (default_checked if default_checked and len(default_checked) == len(labels)
+                   else [default_all] * len(labels))
+        boxes = [ft.Checkbox(label=lab, value=checked[i]) for i, lab in enumerate(labels)]
 
         def finish(cancel):
             def h(_):

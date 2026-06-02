@@ -9,13 +9,15 @@ class _StdoutProxy:
     """Пишет в ТЕКУЩИЙ sys.stdout. В GUI он перенаправлен в лог-панель, поэтому
     логгер (INFO/ошибки SSH/БД) попадает и туда, а не только в терминал."""
 
-    def write(self, s):
+    @staticmethod
+    def write(s):
         return sys.stdout.write(s)
 
-    def flush(self):
+    @staticmethod
+    def flush():
         try:
             sys.stdout.flush()
-        except Exception:
+        except (Exception,):
             pass
 
 

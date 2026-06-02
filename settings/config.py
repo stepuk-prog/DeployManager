@@ -23,6 +23,8 @@ SSH_USER = os.getenv("SSH_USER", "vova")
 SSH_KEY = str(Path(os.getenv("SSH_KEY", "~/.ssh/id_nodes")).expanduser())
 SSH_PORT = int(os.getenv("SSH_PORT", "22"))
 SSH_CONNECT_TIMEOUT = int(os.getenv("SSH_CONNECT_TIMEOUT", "10"))
+# rsync: таймаут бездействия I/O (сек) — обрывает зависшую передачу, чтобы деплой не висел вечно.
+RSYNC_TIMEOUT = int(os.getenv("RSYNC_TIMEOUT", "120"))
 # Пользователь для привилегированных шагов (юниты в /etc, systemctl). Если задан
 # (напр. root) — вход под ним без sudo; пусто — текущий SSH_USER + passwordless sudo.
 PRIV_USER = os.getenv("PRIV_USER", "")
@@ -36,8 +38,6 @@ PRIV_KEY_PASSPHRASE = os.getenv("PRIV_KEY_PASSPHRASE", "") or None
 
 # ----- systemd -----
 SYSTEMD_DIR = "/etc/systemd/system"
-# Шаблон имени юнитов проекта (для подсветки «своих» при установке).
-SERVICE_GLOB = "*.service"
 
 # ----- rsync -----
 # Что НЕ переносить на сервер. .env НЕ исключаем — его деплоим обязательно (.env.example — нет).

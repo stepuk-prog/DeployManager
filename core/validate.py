@@ -142,6 +142,18 @@ def _is_blank(p: str | None) -> bool:
     return not (p or "").strip()
 
 
+def _rel_paths(svc: LocalService) -> list[str]:
+    """Подозрительные ОТНОСИТЕЛЬНЫЕ пути в юните (должны быть абсолютными, с ведущим '/').
+    Из-за них rsync/cp бьют мимо (путь считается от домашней папки) → деплой ломается."""
+    bad = []
+    if svc.working_dir and not svc.working_dir.startswith("/"):
+        bad.append(f"WorkingDirectory={svc.working_dir}")
+    for tok in (svc.exec_start or "").split():           # аргументы ExecStart, похожие на путь
+        if "/" in tok and not tok.startswith(("/", "-", "$")):
+            bad.append(f"ExecStart: {tok}")
+    return bad
+
+
 def _path_diff_note(file_path: str | None, db_path: str | None) -> str:
     """Короткая пометка, чем отличаются пути, если различие лишь косметическое
     (регистр / пробелы / лишние слэши). Пустая строка — пути расходятся по существу
@@ -192,7 +204,19 @@ async def validate_paths(db: Database, project_dir: str,
             if not await _resolve_missing(db, svc):
                 return False
             continue
-        if _is_blank(rec["folder"]):
+        # ── сравнение путей файл ↔ БД; здесь же ловим битые (не абсолютные) пути ──
+        rel = _rel_paths(svc)      # путь в файле без ведущего '/' → rsync/cp бьют мимо
+        if rel:
+            print(f"  {svc.name:26} ❌ битый (не абсолютный) путь в юните: {', '.join(rel)}")
+            print(f"      Деплой невозможен — путь считается от домашней папки. "
+                  f"Исправьте абсолютные пути (ведущий '/') в {svc.name}.")
+            return False
+        if not str(rec["folder"] or "").startswith("/") and not _is_blank(rec["folder"]):
+            all_ok = False                              # путь в БД есть, но не абсолютный → битый
+            print(f"  {svc.name:26} ❌ битый (не абсолютный) путь в БД: {rec['folder']!r}")
+            if not await _resolve_mismatch(db, svc, rec):   # «Записать в БД из файла» исправит
+                return False
+        elif _is_blank(rec["folder"]):
             all_ok = False
             print(f"  {svc.name:26} ⚠️ в БД folder = NULL (пусто)")
             if not await _resolve_null_folder(db, svc, rec):
@@ -258,7 +282,7 @@ async def _resolve_mismatch(db: Database, svc: LocalService, rec) -> bool:
         return False
     idx = await ui.select(
         f"{svc.name}: путь в файле ({svc.working_dir}) ≠ в БД ({rec['folder']}). Что менять?",
-        ["📝 БД → путь из файла", "📄 Файл → путь из БД", "⏭️ Пропустить"], default_index=2)
+        ["📝 Записать в БД из файла", "📄 Записать в файл из БД", "⏭️ Пропустить"], default_index=2)
     if idx == 0:
         await db.update_program_folder(rec["program_id"], _norm(svc.working_dir))
         print("    ✅ БД обновлена.")

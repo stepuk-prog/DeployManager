@@ -34,12 +34,24 @@ def _rsync_excluded(rel: str, excludes: list[str]) -> bool:
 
 
 def deployed_files(project_dir: str) -> list[str]:
-    """Относительные пути файлов, которые попадают на сервер (для сверки)."""
-    out = subprocess.run(["git", "-C", project_dir, "ls-files"],
-                         capture_output=True, text=True, timeout=15).stdout
+    """Относительные пути файлов, которые попадают на сервер (для сверки).
+    Берём git-tracked И untracked (не игнорируемые .gitignore) — последнее это новые исходники,
+    ещё не закоммиченные, но которые rsync всё равно доставит. Игнорируемые (.gitignore) не берём
+    (логи/venv/кэши — их и rsync режет через RSYNC_EXCLUDES). Затем фильтр RSYNC_EXCLUDES."""
+    def _git_ls(*args: str) -> str:
+        try:
+            r = subprocess.run(["git", "-C", project_dir, "ls-files", *args],
+                               capture_output=True, text=True, timeout=15)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            raise RuntimeError(f"git ls-files {' '.join(args)} в {project_dir}: {e}") from e
+        if r.returncode != 0:                            # не git-репо / ошибка — не молчим
+            raise RuntimeError(f"git ls-files в {project_dir} → код {r.returncode}: {(r.stderr or '').strip()}")
+        return r.stdout
+    tracked = _git_ls()
+    untracked = _git_ls("--others", "--exclude-standard")
     includes = set(config.RSYNC_INCLUDES)          # вернулись через --include, несмотря на exclude
     files = []
-    for f in out.splitlines():
+    for f in (tracked.splitlines() + untracked.splitlines()):
         f = f.strip()
         if not f or (_rsync_excluded(f, config.RSYNC_EXCLUDES) and f not in includes):
             continue
@@ -65,6 +77,8 @@ def local_hashes(project_dir: str, files: list[str]) -> dict[str, str]:
 
 async def remote_hashes(ssh: SshClient, host: str, folder: str, files: list[str]) -> dict[str, str]:
     """sha256 файлов на ноде. Отсутствующие файлы просто не попадут в результат."""
+    if not files:                                        # иначе `sha256sum --` зависнет на stdin
+        return {}
     quoted = " ".join(shlex.quote(f) for f in files)
     res = await ssh.run(host, f"cd {shlex.quote(folder.rstrip('/'))} && sha256sum -- {quoted}", timeout=180)
     result = {}
@@ -84,9 +98,14 @@ def compare(local: dict[str, str], remote: dict[str, str]) -> list[tuple[str, st
     return out
 
 
-async def verify_node(ssh: SshClient, host: str, folder: str, project_dir: str) -> tuple[int, int, list[str]]:
-    """Возвращает (всего, совпало, [проблемные файлы])."""
+async def verify_node(ssh: SshClient, host: str, folder: str, project_dir: str,
+                      ignore_globs: list[str] | None = None) -> tuple[int, int, list[str]]:
+    """Возвращает (всего, совпало, [проблемные файлы]). ignore_globs — пути (fnmatch), которые
+    исключаются из сверки (напр. ['systemd/*.service'] при решении «совпал ли КОД», когда юниты
+    как раз доустанавливаются и их расхождение/отсутствие не должно считаться рассинхроном)."""
     files = deployed_files(project_dir)
+    if ignore_globs:
+        files = [f for f in files if not any(fnmatch.fnmatch(f, g) for g in ignore_globs)]
     local = local_hashes(project_dir, files)
     remote = await remote_hashes(ssh, host, folder, files)
     results = compare(local, remote)

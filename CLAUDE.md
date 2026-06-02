@@ -20,7 +20,7 @@ GitHub: `git@github.com-stepuk:stepuk-prog/DeployManager.git` (alias `github.com
 - `classes/deployer.py` — `rsync_project` (mkdir -p + rsync, dry-run), `provision` (venv/pip/playwright), `install_services` (юниты в /etc под root), `write_version`.
 - `classes/manifest.py` — git-версия проекта + парс `VERSION` с ноды.
 - `core/ui.py` — **единый интерактив**: `ask`/`confirm`/`select`(один)/`checkbox`(много). Все async. CLI → questionary(TTY)/input; GUI → `set_backend(FletUi)`. Никогда не мешать `input()` с questionary (raw-режим).
-- `core/validate.py` — сверка service-файлов ↔ `programdata` (путь/`service_name`/`Restart`(off под Dispatcher)/`venv` в ExecStart) + интерактивное разрешение.
+- `core/validate.py` — сверка service-файлов ↔ `programdata` (путь/`service_name`/`Restart`(off под Dispatcher)/`venv` в ExecStart) + интерактивное разрешение. **Проверка битых (не абсолютных) путей — на этапе сравнения файл↔БД** (`_rel_paths`): относительный `WorkingDirectory`/аргумент `ExecStart` в файле → жёсткий стоп (иначе rsync/cp бьют мимо от домашней папки); относительный `folder` в БД → как расхождение, чинится «Записать в БД из файла». Подстраховка в `cli.run`: не абсолютный `remote_folder` → отказ.
 - `core/deploy.py` — оркестрация `_deploy_one`/`deploy` (per-node, dry_run).
 - `core/status.py`, `core/dashboard.py` — версии/обзор по нодам (read-only).
 - `core/state.py` — `systemctl show` → `service_status.running/systemd_error` (без sudo).
@@ -48,12 +48,14 @@ GitHub: `git@github.com-stepuk:stepuk-prog/DeployManager.git` (alias `github.com
 
 ## Ветки/действия
 1. **Деплой с нуля** (`new`) — на чистые ноды.
-2. **Добавить сервер** (`add`) — показывает карту развёртывания, деплой на новые; preflight пропускает уже развёрнутые (есть `VERSION`) — «обновление = отдельная ветка»; предупреждает о рассинхроне версий.
+2. **Добавить сервер** (`add`) — показывает карту развёртывания, деплой на новые; предупреждает о рассинхроне версий.
+- **Лёгкая доустановка юнитов** (в preflight веток 1/2): если на ноде есть `VERSION` и КОД совпадает (хэш-сверка `verify_node`, из неё исключены `systemd/*.service` И `requirements.txt` — `ignore_globs`), то вместо передеплоя предлагается доставить недостающие юниты (`sync_units`: rsync `systemd/`→install в `/etc`) + связи в БД + `write_version`, **без rsync кода/provision/playwright**. Так добавляются НОВЫЕ service-файлы к уже развёрнутому проекту. **requirements.txt сверяется ОТДЕЛЬНО**: если изменился (`req_changed`) — лёгкий путь доставляет код-папку (rsync) и ставит зависимости (`provision`: venv + `pip install -r`, без playwright). `verify_node` учитывает и untracked-файлы (`git ls-files --others --exclude-standard`). Если расходится сам КОД (не юниты/requirements) — «обновление = отдельная ветка» (`update`).
+- Выбор юнитов: `_select_services` (checkbox, шаблоны `@` не предлагаются). Выбор нод: ноды со связанной программой **предотмечены** в чек-боксе (`default_checked`).
 3. **Проверить версии** (`check`) — дашборд (версия/отставание/leader/running) + опц. state-check + опц. управление.
 - **Управление** (`manage`) — start/stop/restart через watchdog (leader — с предупреждением).
 - **Деинсталляция** (`uninstall`) — 2 режима поиска: `[1]` по service-файлам = **весь проект** (все юниты + папка), `[2]` из БД = одна программа (старые). **Гейт: status=true → запрет** (сперва stop через watchdog). Ноды ищутся SSH-пробой наличия папки/юнитов. Снять привязку → stop/disable/rm юнитов (root) → rm папки (опц) → журнал → опц. удаление записей из programdata (каскад).
 - `create` — создать запись programdata; `state` — обновить running.
-- **Обновление** (`update`/`sync`) — `core/update.py`: синхронизация отставших нод до локальной версии (rsync→provision→install→write_version→restart), предлагается всплывающим диалогом в «Проверить версии» при рассинхроне. `core/sync_config.py` (action `sync`): обновить `.env`/юниты без передеплоя (с хэш-сверкой, не трогает идентичные).
+- **Обновление** (`update`/`sync`) — `core/update.py`: синхронизация отставших нод до локальной версии (rsync→provision→install→write_version). **Только код, БЕЗ перезапуска** — сервисы не трогаем (запуск/рестарт — отдельно через «Управление»/диспетчер), чтобы не конфликтовать с leader/standby и политикой диспетчера (`status`/`RUNNING_DISABLED`). Предлагается всплывающим диалогом в «Проверить версии» при рассинхроне. `core/sync_config.py` (action `sync`): обновить `.env`/юниты без передеплоя (с хэш-сверкой, не трогает идентичные).
 
 ## Гайдлайны/гочи
 - **Прод!** Деструктивное в БД/на нодах — только с подтверждением; деплой/uninstall/update логировать в журнал.
@@ -65,6 +67,6 @@ GitHub: `git@github.com-stepuk:stepuk-prog/DeployManager.git` (alias `github.com
 - Цвет лога — **пер-значение** (span'ы): leader/active/up-to-date зелёный; standby/inactive/stale/отстаёт янтарный; unavailable/⛔/❌/‼️/🛑/ошибка/⚠️⚠️/fail красный. Кнопки диалогов: Да/OK светло-зелёные, Нет/Отмена приглушённо-красные, danger «Да» красная + «Нет» серая.
 
 ## Состояние (на момент записи)
-- Всё на ветке **`master`** (запушено; `feature/gui`/`feature/management` влиты и удалены). См. `CHANGELOG.md`.
+- Всё на ветке **`master`** (запушено; `feature/gui`/`feature/management` влиты и удалены). См. `docs/CHANGELOG.md` и `docs/OVERVIEW.md`.
 - Готово: первичный деплой, добавление серверов, дашборд/«Проверить версии» (state-check по умолчанию), watchdog-управление, деинсталляция (3 режима, в т.ч. «из журнала»), журнал, GUI (Flet, цветной лог, combobox), **ветка обновления** (`update`) и **`sync`** (.env/юниты).
 - Обкатано вживую: деинсталляция; первичный деплой (после фикса `logs/*.py` — `import logs` чинился доставкой исходников). **Дальше:** обкатать `update`/`sync` вживую.

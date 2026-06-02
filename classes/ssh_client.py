@@ -66,6 +66,7 @@ class SshClient:
                     host=host, port=config.SSH_PORT, username=user,
                     client_keys=[client_key], known_hosts=None,
                     connect_timeout=config.SSH_CONNECT_TIMEOUT,
+                    keepalive_interval=15, keepalive_count_max=4,  # отваливаем зависшие соединения
                 )
                 self._conns[key] = conn
             return conn
@@ -75,7 +76,7 @@ class SshClient:
         if conn is not None:
             try:
                 conn.close()
-            except Exception:
+            except (Exception,):
                 pass
 
     async def run(self, host: str, command: str, timeout: int = 30, sudo: bool = False,
@@ -84,7 +85,7 @@ class SshClient:
         user = user or config.SSH_USER
         cmd = f"sudo -n {command}" if sudo else command
         last = ""
-        for attempt in (1, 2):  # одна попытка реконнекта при обрыве соединения
+        for _ in (1, 2):  # одна попытка реконнекта при обрыве соединения
             try:
                 conn = await self._get(host, user)
                 res = await asyncio.wait_for(conn.run(cmd, check=False), timeout=timeout)

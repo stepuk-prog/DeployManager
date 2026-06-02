@@ -5,10 +5,7 @@ from dataclasses import dataclass
 from classes.deployer import Deployer
 from classes.manifest import LocalVersion, build_manifest
 from classes.ssh_client import SshClient
-from logs import get_logger
 from settings import config
-
-logger = get_logger(__name__)
 
 
 @dataclass
@@ -18,6 +15,12 @@ class DeployResult:
     ok: bool
     step: str            # на каком шаге остановились / 'done'
     detail: str = ""
+
+
+def node_flags(step: str) -> tuple[bool, bool]:
+    """Из шага DeployResult → (folder_deployed, service_installed) для журнала.
+    folder доставлена, если прошли дальше rsync; сервис установлен на write_version/done."""
+    return step not in ("ping", "rsync"), step in ("write_version", "done")
 
 
 async def _deploy_one(ssh: SshClient, deployer: Deployer, node, project_dir: str,

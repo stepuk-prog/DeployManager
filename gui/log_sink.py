@@ -102,5 +102,5 @@ class LogSink:
     def _update(self) -> None:
         try:
             self.page.update()
-        except Exception:
+        except (Exception,):
             pass

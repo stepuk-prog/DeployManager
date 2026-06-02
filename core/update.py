@@ -2,8 +2,12 @@
 
 В отличие от первичного деплоя (preflight пропускает ноды с VERSION как «уже развёрнуты»),
 здесь мы НАМЕРЕННО перезаписываем отставшие/разошедшиеся ноды: rsync кода → provision →
-install_services → write_version (через deploy_mod.deploy), затем restart через watchdog,
-чтобы новый код применился. Цель — ноды из dashboard (версия != локальной).
+install_services → write_version (через deploy_mod.deploy). Цель — ноды из dashboard
+(версия != локальной).
+
+Сервисы НЕ перезапускаем — это только синхронизация кода. Новый код применится при следующем
+запуске/рестарте (отдельно: ветка «Управление» / диспетчер). Так обновление не трогает
+leader/standby и не конфликтует с failover/политикой диспетчера (status, RUNNING_DISABLED и т.п.).
 """
 import getpass
 from datetime import datetime
@@ -13,7 +17,6 @@ from classes.ssh_client import SshClient
 from core import audit, deploy as deploy_mod, ui
 from database import Database
 from logs import get_logger
-from settings import config
 
 logger = get_logger(__name__)
 
@@ -41,8 +44,9 @@ async def update(ssh: SshClient, db: Database, project_dir: str, remote_folder: 
     if local.dirty:
         print("  ⚠️⚠️ Локально есть незакоммиченные изменения (DIRTY) — версия на ноде будет неточной.")
     if not dry_run and not await ui.confirm(
-            f"Обновить код на {len(targets)} нод(ах) до локальной {local.short} и перезапустить? "
-            "Работающие сервисы будут перезапущены.", danger=True):
+            f"Обновить код на {len(targets)} нод(ах) до локальной {local.short}? "
+            "Только синхронизация кода — сервисы НЕ перезапускаются "
+            "(новый код применится при следующем запуске/рестарте).", danger=True):
         print("🛑 Отменено.")
         return
 
@@ -62,10 +66,10 @@ async def update(ssh: SshClient, db: Database, project_dir: str, remote_folder: 
     operator = getpass.getuser()
     for rec in records:
         for n, res in zip(targets, results):
+            folder, service = deploy_mod.node_flags(res.step)
             await db.journal_write(
                 rec["program_id"], n["id"], "update",
-                folder_deployed=res.step not in ("ping", "rsync"),
-                service_installed=res.step in ("write_version", "done"), db_updated=res.ok,
+                folder_deployed=folder, service_installed=service, db_updated=res.ok,
                 result=("ok" if res.ok else res.step), commit=local.commit, operator=operator,
                 details={"ip": n["ip_address"], "detail": res.detail})
     audit.write({
@@ -75,7 +79,7 @@ async def update(ssh: SshClient, db: Database, project_dir: str, remote_folder: 
         "nodes": [{"node": r.node, "ip": r.ip, "ok": r.ok, "step": r.step} for r in results],
     })
 
-    if any(r.ok for r in results) and await ui.confirm(
-            "Перезапустить сервис на обновлённых нодах (через watchdog), чтобы применить новый код?"):
-        from core import watchdog
-        await watchdog.manage(db, project_dir, command="restart")
+    ok_n = sum(1 for r in results if r.ok)
+    print(f"\n✅ Код обновлён до {local.short} на {ok_n}/{len(results)} нод(ах). "
+          f"Сервисы НЕ перезапускались — новый код применится при следующем запуске/рестарте "
+          f"(делается отдельно: «Управление» или через диспетчер).")

@@ -17,10 +17,16 @@ class LocalVersion:
 
 
 def _git(project_dir: str, *args: str) -> str:
-    out = subprocess.run(
-        ["git", "-C", project_dir, *args],
-        capture_output=True, text=True, timeout=15,
-    )
+    try:
+        out = subprocess.run(
+            ["git", "-C", project_dir, *args],
+            capture_output=True, text=True, timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:    # нет git / завис
+        raise RuntimeError(f"git {' '.join(args)} в {project_dir}: {e}") from e
+    if out.returncode != 0:                              # не маскируем сбой пустой строкой
+        raise RuntimeError(f"git {' '.join(args)} в {project_dir} → код {out.returncode}: "
+                           f"{(out.stderr or '').strip()}")
     return (out.stdout or "").strip()
 
 

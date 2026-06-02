@@ -86,9 +86,17 @@ async def uninstall(ssh: SshClient, db: Database, project_dir: str, preselect: s
     cands = []   # (node, has_folder, [present_units])
     for n in nodes:
         ip = n["ip_address"]
-        hf = await ssh.path_exists(ip, folder) if folder else False
-        present = [u for u in units if await ssh.path_exists(ip, units[u])]
         bound_here = any(n["id"] in binds[pid] for pid in binds)
+        hf, present = False, []
+        if await ssh.ping(ip):                          # недоступную не зондируем (иначе таймауты)
+            try:
+                hf = await ssh.path_exists(ip, folder) if folder else False
+                present = [u for u in units if await ssh.path_exists(ip, units[u])]
+            except Exception as e:                      # noqa: BLE001 — одна нода не валит весь поиск
+                print(f"  ⚠️ {n['server_name'] or ip}: ошибка пробы ({e}) — пропускаю")
+                continue
+        elif not bound_here:
+            continue                                    # offline и без привязки — нечего чистить
         if hf or present or bound_here:
             cands.append((n, hf, present))
     if not cands:
@@ -117,15 +125,17 @@ async def uninstall(ssh: SshClient, db: Database, project_dir: str, preselect: s
                                     f"{' + удалить папку' if rm_folder else ''}? Необратимо."):
                 print(f"  ⏭️  {node} пропущен")
                 continue
-            # снять привязки + остановить/удалить все юниты одним заходом (root)
+            # остановить/выключить/удалить все юниты одним заходом (root)
             stops = []
             for p in programs:
-                if n["id"] in binds[p["program_id"]]:
-                    await db.unbind_service_node(p["program_id"], n["id"])
                 u = shlex.quote(p["service_name"])
                 stops.append(f"systemctl stop {u}; systemctl disable {u}; rm -f {shlex.quote(units[p['service_name']])}")
             inner = "; ".join(stops + ["systemctl daemon-reload"])
             res = await ssh.run_priv(ip, f"sh -c {shlex.quote(inner)}", timeout=90)
+            if res.ok:                                  # привязку в БД снимаем ТОЛЬКО после успеха на ноде
+                for p in programs:                      # (иначе рассинхрон: в БД снято, а юнит жив)
+                    if n["id"] in binds[p["program_id"]]:
+                        await db.unbind_service_node(p["program_id"], n["id"])
             folder_msg = ""
             if rm_folder and folder:
                 fr = await ssh.run(ip, f"rm -rf {shlex.quote(folder)}", timeout=60)

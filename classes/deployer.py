@@ -15,6 +15,30 @@ class Deployer:
     def __init__(self, ssh: SshClient):
         self.ssh = ssh
 
+    @property
+    def _ssh_cmd(self) -> str:
+        """ssh-транспорт для rsync: ключ/порт/таймаут коннекта + keepalive (рвём зависшие каналы)."""
+        return (f"ssh -i {config.SSH_KEY} -p {config.SSH_PORT} "
+                f"-o StrictHostKeyChecking=accept-new -o ConnectTimeout={config.SSH_CONNECT_TIMEOUT} "
+                f"-o ServerAliveInterval=15 -o ServerAliveCountMax=4")
+
+    @staticmethod
+    async def _run_rsync(cmd: list[str], host: str, label: str) -> tuple[bool, str]:
+        """Запуск rsync с жёстким таймаутом (не виснем на stalled-передаче). → (ok, stdout)."""
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        try:
+            out, err = await asyncio.wait_for(proc.communicate(), timeout=config.PROVISION_TIMEOUT)
+        except asyncio.TimeoutError:
+            proc.kill()
+            logger.error("%s %s TIMEOUT (> %ss) — прерван", label, host, config.PROVISION_TIMEOUT)
+            return False, ""
+        if proc.returncode != 0:
+            logger.error("%s %s FAILED (%s): %s", label, host, proc.returncode,
+                         (err or b"").decode(errors="replace").strip())
+            return False, ""
+        return True, (out or b"").decode(errors="replace")
+
     async def rsync_project(self, host: str, project_dir: str, remote_folder: str,
                             dry_run: bool = False) -> bool:
         """rsync содержимого project_dir → vova@host:remote_folder (под vova, верный владелец).
@@ -27,29 +51,23 @@ class Deployer:
                 return False
         src = project_dir.rstrip("/") + "/"
         dst = f"{config.SSH_USER}@{host}:{folder}/"
-        ssh_cmd = (f"ssh -i {config.SSH_KEY} -p {config.SSH_PORT} "
-                   f"-o StrictHostKeyChecking=accept-new -o ConnectTimeout={config.SSH_CONNECT_TIMEOUT}")
-        cmd = ["rsync", "-az"]
+        cmd = ["rsync", "-az", f"--timeout={config.RSYNC_TIMEOUT}"]
         if dry_run:
             cmd += ["-n", "-i"]   # itemize: показать, что изменилось бы
         if config.RSYNC_DELETE:
             cmd.append("--delete")
-        cmd += ["-e", ssh_cmd]
+        cmd += ["-e", self._ssh_cmd]
         for inc in config.RSYNC_INCLUDES:       # include ПЕРЕД exclude (первое правило выигрывает)
             cmd.append(f"--include={inc}")
         for ex in config.RSYNC_EXCLUDES:
             cmd.append(f"--exclude={ex}")
         cmd += [src, dst]
         logger.info("rsync%s → %s:%s", " (dry-run)" if dry_run else "", host, folder)
-        proc = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        out, err = await proc.communicate()
-        if proc.returncode != 0:
-            logger.error("rsync %s FAILED (%s): %s", host, proc.returncode,
-                         (err or b"").decode(errors="replace").strip())
+        ok, out = await self._run_rsync(cmd, host, "rsync")
+        if not ok:
             return False
         if dry_run:
-            changes = (out or b"").decode(errors="replace").strip()
+            changes = out.strip()
             print(f"  [{host}] изменения rsync:\n" +
                   ("\n".join("      " + l for l in changes.splitlines()) if changes else "      (нет)"))
         return True
@@ -68,18 +86,11 @@ class Deployer:
                 logger.error("mkdir %s FAILED: %s", host, mk.stderr or mk.stdout)
                 return False
         dst = f"{config.SSH_USER}@{host}:{folder}/.env"
-        ssh_cmd = (f"ssh -i {config.SSH_KEY} -p {config.SSH_PORT} "
-                   f"-o StrictHostKeyChecking=accept-new -o ConnectTimeout={config.SSH_CONNECT_TIMEOUT}")
-        cmd = ["rsync", "-az"] + (["-n", "-i"] if dry_run else []) + ["-e", ssh_cmd, src, dst]
+        cmd = (["rsync", "-az", f"--timeout={config.RSYNC_TIMEOUT}"]
+               + (["-n", "-i"] if dry_run else []) + ["-e", self._ssh_cmd, src, dst])
         logger.info("sync .env%s → %s:%s/.env", " (dry-run)" if dry_run else "", host, folder)
-        proc = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        _out, err = await proc.communicate()
-        if proc.returncode != 0:
-            logger.error("sync_env %s FAILED (%s): %s", host, proc.returncode,
-                         (err or b"").decode(errors="replace").strip())
-            return False
-        return True
+        ok, _out = await self._run_rsync(cmd, host, "sync_env")
+        return ok
 
     async def sync_units(self, host: str, project_dir: str, remote_folder: str,
                          service_files: list[str], dry_run: bool = False) -> bool:
@@ -98,17 +109,11 @@ class Deployer:
                 logger.error("mkdir %s FAILED: %s", host, mk.stderr or mk.stdout)
                 return False
         dst = f"{config.SSH_USER}@{host}:{folder}/systemd/"
-        ssh_cmd = (f"ssh -i {config.SSH_KEY} -p {config.SSH_PORT} "
-                   f"-o StrictHostKeyChecking=accept-new -o ConnectTimeout={config.SSH_CONNECT_TIMEOUT}")
-        cmd = (["rsync", "-az"] + (["-n", "-i"] if dry_run else [])
-               + ["-e", ssh_cmd, local_sd.rstrip("/") + "/", dst])
+        cmd = (["rsync", "-az", f"--timeout={config.RSYNC_TIMEOUT}"] + (["-n", "-i"] if dry_run else [])
+               + ["-e", self._ssh_cmd, local_sd.rstrip("/") + "/", dst])
         logger.info("sync юниты%s → %s:%s/systemd", " (dry-run)" if dry_run else "", host, folder)
-        proc = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        _out, err = await proc.communicate()
-        if proc.returncode != 0:
-            logger.error("sync_units %s FAILED (%s): %s", host, proc.returncode,
-                         (err or b"").decode(errors="replace").strip())
+        ok, _out = await self._run_rsync(cmd, host, "sync_units")
+        if not ok:
             return False
         if dry_run:
             return True

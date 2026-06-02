@@ -4,12 +4,15 @@
 а confirm() — True только при --yes, иначе False (т.е. по умолчанию НЕ выполнять).
 """
 import sys
+from typing import Any
 
 INTERACTIVE = True
 ASSUME_YES = False
 # Бэкенд интерактива (GUI). Если задан — ask/confirm/checkbox рисует он (диалоги),
 # CLI-реализация (questionary/input) не используется. Ядро остаётся UI-агностичным.
-_BACKEND = None
+# Тип Any: у бэкенда динамический набор async-методов (ask/confirm/select/combobox/checkbox),
+# иначе статанализ (PyCharm) ругается на обращения к атрибутам None.
+_BACKEND: Any = None
 
 
 def set_mode(interactive: bool, assume_yes: bool = False) -> None:
@@ -18,7 +21,7 @@ def set_mode(interactive: bool, assume_yes: bool = False) -> None:
     ASSUME_YES = assume_yes
 
 
-def set_backend(backend) -> None:
+def set_backend(backend: Any) -> None:
     """Подключить GUI-бэкенд с async-методами ask(prompt,default)/confirm(prompt)/
     checkbox(title,labels,default_all). None — вернуть CLI-поведение."""
     global _BACKEND
@@ -48,7 +51,7 @@ async def ask(prompt: str, default: str = "") -> str:
             import questionary
             ans = await questionary.text(prompt, default=default).ask_async()
             return (ans if ans is not None else default).strip() or default
-        except Exception:
+        except (Exception,):
             pass
     return _input(f"{prompt}{(' [' + default + ']') if default else ''}: ") or default
 
@@ -66,7 +69,7 @@ async def confirm(prompt: str, danger: bool = False) -> bool:
         try:
             import questionary
             return bool(await questionary.confirm(prompt, default=False).ask_async())
-        except Exception:
+        except (Exception,):
             pass
     return _input(f"{prompt} [y/N]: ").lower() == "y"
 
@@ -97,7 +100,7 @@ async def select(title: str, labels: list[str], default_index: int = 0) -> int |
             r = await questionary.select(title, choices=choices,
                                          default=choices[default_index]).ask_async()
             return r if r is not None else None
-        except Exception:
+        except (Exception,):
             pass
     print(title)
     for i, lab in enumerate(labels, 1):
@@ -120,28 +123,34 @@ def _checkbox_text(title: str, labels: list[str]) -> list[int]:
             if t.isdigit() and 1 <= int(t) <= len(labels)]
 
 
-async def checkbox(title: str, labels: list[str], default_all: bool = False) -> list[int]:
+async def checkbox(title: str, labels: list[str], default_all: bool = False,
+                   default_checked: list[bool] | None = None) -> list[int]:
     """Множественный выбор чек-боксами → список выбранных индексов (0-based). Корутина:
     вся программа крутится в asyncio.run, поэтому используем ask_async() (sync .ask()
     внутри работающего loop падает «run_async was never awaited»).
 
-    Неинтерактив: все (default_all/--yes) или пусто. Интерактив + настоящий TTY:
-    questionary-чекбоксы (пробел/enter). Без TTY (Run-консоль IDE) или без questionary —
-    откат на текстовый ввод номеров (с пояснением причины).
+    default_checked — по-элементная предотметка (len == len(labels)); приоритетнее default_all
+    (напр. предотметить ноды, где программа уже стоит). Неинтерактив: предотмеченные
+    (или все при default_all/--yes), иначе пусто. Интерактив + настоящий TTY: questionary-чекбоксы
+    (пробел/enter). Без TTY или без questionary — откат на текстовый ввод номеров.
     """
     if not labels:
         return []
+    checked = (default_checked if default_checked and len(default_checked) == len(labels)
+               else [default_all] * len(labels))
     if _BACKEND is not None:
-        return await _BACKEND.checkbox(title, labels, default_all)
+        return await _BACKEND.checkbox(title, labels, default_all, checked)
     if not INTERACTIVE:
-        return list(range(len(labels))) if (ASSUME_YES or default_all) else []
+        if ASSUME_YES:
+            return list(range(len(labels)))
+        return [i for i, c in enumerate(checked) if c]
     if not _has_tty():
         print("(терминал без TTY — чек-боксы недоступны; включи «Emulate terminal in "
               "output console» в IDE или запусти в обычном терминале)")
         return _checkbox_text(title, labels)
     try:
         import questionary
-        choices = [questionary.Choice(title=lab, value=i, checked=default_all)
+        choices = [questionary.Choice(title=lab, value=i, checked=checked[i])
                    for i, lab in enumerate(labels)]
         picked = await questionary.checkbox(title, choices=choices).ask_async()
         return picked if picked is not None else []

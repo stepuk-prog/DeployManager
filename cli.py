@@ -9,7 +9,7 @@ import os
 from datetime import datetime
 
 from classes import Deployer, SshClient
-from classes.manifest import local_version, parse_manifest
+from classes.manifest import build_manifest, local_version, parse_manifest
 from core import audit as audit_mod
 from core import deploy as deploy_mod
 from core import provision as provision_mod
@@ -18,10 +18,7 @@ from core import ui
 from core import validate as validate_mod
 from core import verify as verify_mod
 from database import Database
-from logs import get_logger
 from settings import config
-
-logger = get_logger("cli")
 
 # Три основные ветки + служебные действия для автоматизации.
 _ACTION_MAP = {"new": "1", "add": "2", "check": "3", "dashboard": "3", "status": "3",
@@ -59,7 +56,10 @@ async def _select_nodes(nodes: list, linked_ips: set[str], preselect: str | None
         return _parse_selection(nodes, preselect)
     labels = [f"{'*' if n['ip_address'] in linked_ips else ' '} {(n['server_name'] or n['hostname']):18} "
               f"{n['ip_address']:16} {n['description'] or ''}" for n in nodes]
-    idxs = await ui.checkbox("Ноды для операции (* — связаны с программой; пробел — отметить, enter — ок):", labels)
+    # ноды, где программа уже стоит (связаны), предотмечаем — обычно операция именно по ним.
+    default_checked = [n["ip_address"] in linked_ips for n in nodes]
+    idxs = await ui.checkbox("Ноды для операции (* — связаны с программой; пробел — отметить, enter — ок):",
+                             labels, default_checked=default_checked)
     return [nodes[i] for i in idxs]
 
 
@@ -116,13 +116,14 @@ async def _preflight(ssh: SshClient, db: Database, targets: list, remote_folder:
     """Предполётная проверка (первичный деплой / добавление серверов).
 
       • чисто (нет папки/юнитов) → новый сервер, полный деплой;
-      • есть наш VERSION + содержимое СОВПАДАЕТ с локальным (хэш-сверка):
-          — не хватает юнитов/связей → ЛЁГКИЙ путь (доставить юнит + связи в БД, без передеплоя);
+      • есть наш VERSION + КОД совпадает (хэш-сверка, без systemd/*.service и requirements.txt):
+          — не хватает юнитов/связей или изменился requirements.txt → ЛЁГКИЙ путь (доставить юниты,
+            при изменении requirements — pip install -r, связи в БД; без полного передеплоя);
           — всё на месте → пропускаем;
-      • есть VERSION, но содержимое РАСХОДИТСЯ → синхронизация в ветке обновления, пропускаем;
+      • есть VERSION, но КОД расходится → синхронизация в ветке обновления, пропускаем;
       • папка/юнит без VERSION → чужое/частичное → спросить (перезаписать/пропустить/отмена).
     Возвращает (approved_full, light_targets) либо None — полная отмена.
-    light_target: {node, units:[недостающие .service], records:[выбранные записи для привязки]}.
+    light_target: {node, units:[недостающие .service], records:[записи], req_changed:bool}.
     """
     print("\n── Предполётная проверка нод ──")
     version_path = f"{remote_folder.rstrip('/')}/{config.VERSION_FILE}"
@@ -142,29 +143,42 @@ async def _preflight(ssh: SshClient, db: Database, targets: list, remote_folder:
         man = parse_manifest(await ssh.read_file(ip, version_path))
         if man is not None:
             short = man.get("short") or (man.get("commit", "")[:9])
-            total, ok, bad = await verify_mod.verify_node(ssh, ip, remote_folder, project_dir)
+            # сверяем КОД без service-файлов И requirements.txt: их обрабатываем отдельно
+            # (юниты доустанавливаем; requirements сверяем ниже отдельно → возможно нужны новые
+            # библиотеки). Иначе «добавить новый юнит» / «появилась новая зависимость» не сработали бы.
+            total, ok, bad = await verify_mod.verify_node(
+                ssh, ip, remote_folder, project_dir, ignore_globs=["systemd/*.service", "requirements.txt"])
             if bad:
-                print(f"  {name:16} ↩️  развёрнут v{short}, но содержимое расходится "
+                print(f"  {name:16} ↩️  развёрнут v{short}, но КОД расходится "
                       f"({len(bad)}/{total}) — синхронизация в ветке обновления, пропускаю")
                 deployed.append((name, man.get("commit", "")))
                 continue
+            # отдельная сверка requirements.txt: если изменился — на ноде могут понадобиться новые
+            # библиотеки (pip install -r при доустановке).
+            lf = verify_mod.local_hashes(project_dir, ["requirements.txt"])
+            rf = await verify_mod.remote_hashes(ssh, ip, remote_folder, ["requirements.txt"])
+            req_changed = lf.get("requirements.txt") != rf.get("requirements.txt")
             missing_units = [sf for sf in service_files
                              if not await ssh.path_exists(ip, f"{config.SYSTEMD_DIR}/{sf}")]
             unbound = [r for r in records if node["id"] not in bound.get(r["program_id"], set())]
-            if not missing_units and not unbound:
-                print(f"  {name:16} ✅ уже полностью развёрнут (код+юниты+связи совпадают)")
+            if not missing_units and not unbound and not req_changed:
+                print(f"  {name:16} ✅ уже полностью развёрнут (код+юниты+связи+зависимости совпадают)")
                 deployed.append((name, man.get("commit", "")))
                 continue
-            print(f"  {name:16} ✓ код совпадает (v{short}), но не хватает:")
+            print(f"  {name:16} ✓ код сверен (sha256 {ok}/{total} совпало, v{short}), не хватает:")
             if missing_units:
                 print(f"        юниты: {', '.join(missing_units)}")
             if unbound:
                 print(f"        связи в БД: {', '.join(r['service_name'] for r in unbound)}")
+            if req_changed:
+                print(f"        ⚠️ requirements.txt ОТЛИЧАЕТСЯ → нужны новые библиотеки (pip install -r)")
             idx = await ui.select(
-                f"{name}: код совпадает, не хватает юнитов/связей. Действие?",
-                ["✅ Доставить юнит + связи", "⏭️ Пропустить", "🛑 Отмена всего"], default_index=0)
+                f"{name}: код совпадает, не хватает юнитов/связей"
+                f"{'/зависимостей' if req_changed else ''}. Действие?",
+                ["✅ Доставить + настроить", "⏭️ Пропустить", "🛑 Отмена всего"], default_index=0)
             if idx == 0:
-                light.append({"node": node, "units": missing_units, "records": records})
+                light.append({"node": node, "units": missing_units, "records": records,
+                              "req_changed": req_changed})
             elif idx == 2:
                 return None
             else:
@@ -247,20 +261,13 @@ async def _bind_and_report(db: Database, records: list, targets: list, results: 
                 print(f"    {name:16} • уже была [{res.split(':', 1)[1]}]")
 
 
-def _node_flags(step: str) -> tuple[bool, bool]:
-    """Из шага DeployResult → (folder_deployed, service_installed)."""
-    folder = step not in ("ping", "rsync")
-    service = step in ("write_version", "done")
-    return folder, service
-
-
 async def _journal_deploy(db: Database, records: list, targets: list, results: list,
                           local, action: str) -> None:
     """Записать журнал по каждой (программа × нода): флаги шагов + результат."""
     operator = getpass.getuser()
     for rec in records:
         for node, res in zip(targets, results):
-            folder, service = _node_flags(res.step)
+            folder, service = deploy_mod.node_flags(res.step)
             await db.journal_write(
                 rec["program_id"], node["id"], action,
                 folder_deployed=folder, service_installed=service, db_updated=res.ok,
@@ -322,29 +329,51 @@ async def _show_deployment_map(db: Database, records: list) -> None:
         print("  (привязок нет — проект ещё нигде не развёрнут; это скорее режим [1] «с нуля»)")
 
 
-async def _install_units_light(db: Database, ssh: SshClient, remote_folder: str,
+async def _install_units_light(db: Database, ssh: SshClient, project_dir: str, remote_folder: str,
                                light_targets: list[dict], local, dry_run: bool) -> bool:
-    """Лёгкий путь: код на ноде уже совпадает с локальным — доставить недостающие юниты
-    в /etc/systemd/system + настроить связи в dispatcher.service_status. Без rsync/provision/VERSION.
-    Возвращает True, если что-то выполнялось (для аудита)."""
+    """Лёгкий путь: код на ноде уже совпадает — НЕ передеплоиваем целиком, а доставляем service-файлы
+    (rsync systemd/ → install в /etc) и настраиваем связи в БД. sync_units доставит и НОВЫЕ юниты.
+    Если requirements.txt изменился (req_changed) — доставляем код-папку (rsync) и ставим зависимости
+    (provision: venv + pip install -r, БЕЗ playwright). VERSION обновляем. → True, если что-то делалось."""
     if not light_targets:
         return False
-    print(f"\n── Лёгкая доустановка (код совпадает: только юниты + связи в БД)"
-          f"{' [DRY-RUN]' if dry_run else ''} ──")
+    print(f"\n── Доустановка юнитов (код совпадает: service-файлы → /etc, при изменении requirements "
+          f"— pip install, + связи в БД){' [DRY-RUN]' if dry_run else ''} ──")
     deployer = Deployer(ssh)
     operator = getpass.getuser()
+    manifest_json = build_manifest(local, operator, datetime.now().isoformat(timespec="seconds"))
     for lt in light_targets:
         node, units, recs = lt["node"], lt["units"], lt["records"]
+        req_changed = lt.get("req_changed", False)
         ip = node["ip_address"]
         name = node["server_name"] or node["hostname"]
         if dry_run:
             print(f"  {name:16} юниты: {', '.join(units) or '—'}; "
+                  f"requirements: {'ИЗМЕНИЛСЯ → pip install -r' if req_changed else 'без изменений'}; "
                   f"связи: {', '.join(r['service_name'] for r in recs)}")
             continue
         ok = True
-        if units:
-            ok = await deployer.install_services(ip, remote_folder, units)
-            print(f"  {name:16} {'✅' if ok else '⛔'} юниты: {', '.join(units)}")
+        if req_changed:
+            # requirements изменился → доставляем папку (rsync подтянет новый requirements + юниты,
+            # совпадающий код — no-op) и ставим зависимости (без playwright), затем юниты в /etc.
+            ok = await deployer.rsync_project(ip, project_dir, remote_folder)
+            if ok and config.PROVISION:
+                ok = await deployer.provision(ip, remote_folder, [])
+            elif ok and not config.PROVISION:
+                print(f"  {name:16} ⚠️ requirements изменился, но PROVISION выключен — зависимости НЕ ставлю")
+            if ok and units:
+                ok = await deployer.install_services(ip, remote_folder, units)
+            print(f"  {name:16} {'✅' if ok else '⛔'} requirements обновлён + зависимости установлены"
+                  + (f"; юниты: {', '.join(units)}" if units else ""))
+            if ok and not await deployer.write_version(ip, remote_folder, manifest_json):
+                print(f"  {name:16} ⚠️ VERSION не записан (нода покажется stale)")
+                ok = False
+        elif units:
+            ok = await deployer.sync_units(ip, project_dir, remote_folder, units)
+            print(f"  {name:16} {'✅' if ok else '⛔'} юниты доставлены+установлены: {', '.join(units)}")
+            if ok and not await deployer.write_version(ip, remote_folder, manifest_json):
+                print(f"  {name:16} ⚠️ VERSION не записан (нода покажется stale)")
+                ok = False
         else:
             print(f"  {name:16} • юниты уже на месте")
         for r in recs:
@@ -359,8 +388,9 @@ async def _install_units_light(db: Database, ssh: SshClient, remote_folder: str,
             await db.journal_write(
                 r["program_id"], node["id"], "attach_unit",
                 folder_deployed=True, service_installed=ok, db_updated=True,
-                result=("ok" if ok else "install_services"), commit=local.commit,
-                operator=operator, details={"ip": ip, "units": units, "light": True})
+                result=("ok" if ok else "light_install"), commit=local.commit,
+                operator=operator,
+                details={"ip": ip, "units": units, "req_changed": req_changed, "light": True})
     return True
 
 
@@ -381,19 +411,14 @@ async def _deploy_flow(db: Database, ssh: SshClient, project_dir: str, local,
     if not await validate_mod.validate_paths(db, project_dir, only=only):
         print("🛑 Деплой отменён на валидации.")
         return
+    # перечитываем записи: в валидации (_resolve_missing) могли создать новые — их тоже привязать.
+    records = await db.find_programs_by_service(sorted(only))
 
     targets = await _select_nodes(nodes, linked_ips, preselect)
     if not targets:
         print("🛑 Ноды не выбраны.")
         return
     service_files = [s.name for s in local_svcs]
-
-    extra_cmds: list[str] = []
-    if config.PROVISION:
-        for pkg, cmd in provision_mod.detect_post_install(project_dir):
-            if await ui.confirm(f"В requirements есть '{pkg}' — нужна отдельная установка ('{cmd}'). "
-                                f"Выполнить на нодах?"):
-                extra_cmds.append(cmd)
 
     pf = await _preflight(ssh, db, targets, remote_folder, local, service_files, records, project_dir)
     if pf is None:
@@ -410,6 +435,15 @@ async def _deploy_flow(db: Database, ssh: SshClient, project_dir: str, local,
             print("🛑 После исключения активных leader-нод не осталось целей.")
             return
 
+    # provision/post-install (playwright и т.п.) спрашиваем ТОЛЬКО при полном деплое — для лёгкой
+    # доустановки юнитов код уже на ноде, rsync/provision не выполняется (нечего ставить).
+    extra_cmds: list[str] = []
+    if targets and config.PROVISION:
+        for pkg, cmd in provision_mod.detect_post_install(project_dir):
+            if await ui.confirm(f"В requirements есть '{pkg}' — нужна отдельная установка ('{cmd}'). "
+                                f"Выполнить на нодах?"):
+                extra_cmds.append(cmd)
+
     # ── план операции ──
     if targets:
         print(f"\nБудет {'СУХОЙ ПРОГОН на' if dry_run else 'задеплоено (полностью) на'} {len(targets)} нод(ы):")
@@ -419,8 +453,8 @@ async def _deploy_flow(db: Database, ssh: SshClient, project_dir: str, local,
         print(f"Код → {remote_folder}; юниты → /etc/systemd/system ({len(service_files)} шт.); "
               f"provisioning: {prov}; версия {local.short}")
     if light_targets:
-        print(f"\nЛёгкая доустановка (код уже совпадает) на {len(light_targets)} нод(ы) — "
-              f"только юниты + связи в БД, без передеплоя.")
+        print(f"\nДоустановка юнитов (код уже совпадает) на {len(light_targets)} нод(ы) — "
+              f"rsync service-файлов + установка в /etc + связи в БД, без передеплоя/provision.")
 
     if not dry_run and not await ui.confirm("Подтвердить операцию?"):
         print("🛑 Отменено.")
@@ -437,7 +471,7 @@ async def _deploy_flow(db: Database, ssh: SshClient, project_dir: str, local,
         deploy_mod.print_deploy_results(results)
 
     if dry_run:
-        await _install_units_light(db, ssh, remote_folder, light_targets, local, dry_run=True)
+        await _install_units_light(db, ssh, project_dir, remote_folder, light_targets, local, dry_run=True)
         print("\nСухой прогон — изменений не внесено (provision/юниты/привязки/VERSION пропущены).")
         return
 
@@ -448,7 +482,7 @@ async def _deploy_flow(db: Database, ssh: SshClient, project_dir: str, local,
         status_mod.print_status(local, await status_mod.check_status(ssh, targets, remote_folder, local))
         await _journal_deploy(db, records, targets, results, local, "add_server" if add_server else "deploy")
 
-    await _install_units_light(db, ssh, remote_folder, light_targets, local, dry_run=False)
+    await _install_units_light(db, ssh, project_dir, remote_folder, light_targets, local, dry_run=False)
 
     audit_mod.write({
         "ts": datetime.now().isoformat(timespec="seconds"),
@@ -513,6 +547,11 @@ async def run(args=None):
         remote_folder, local_svcs, linked_ips, records = await _resolve_remote_folder(db, project_dir)
         if not remote_folder:
             print("🛑 Путь установки не задан — выходим.")
+            return
+        if not remote_folder.startswith("/"):
+            print(f"🛑 Путь установки НЕ абсолютный: {remote_folder!r} — должен начинаться с '/'.\n"
+                  f"   Из-за относительного пути rsync/cp бьют мимо (от домашней папки). Исправьте "
+                  f"WorkingDirectory/ExecStart в service-файле и folder в programdata.")
             return
         print(f"Путь установки на серверах: {remote_folder}")
 
