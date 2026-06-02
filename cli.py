@@ -63,6 +63,33 @@ async def _select_nodes(nodes: list, linked_ips: set[str], preselect: str | None
     return [nodes[i] for i in idxs]
 
 
+async def _select_services(local_svcs: list, records: list) -> tuple[list, list]:
+    """Выбрать, с какими service-файлами (= программами) работаем — каждый файл это отдельная
+    запись programdata. Шаблонные юниты (@) — НЕ программы (нет записи в programdata, инстансы
+    этим инструментом не привязываются/не запускаются), поэтому в выбор и установку не попадают
+    (их исходник всё равно приедет на ноду вместе с папкой через rsync).
+    Возвращает (выбранные не-шаблонные local_svcs, выбранные records). При ≤1 программе — без вопроса."""
+    progs = [s for s in local_svcs if not s.is_template]
+    if len(progs) <= 1:
+        return progs, records
+    rec_by_name = {r["service_name"]: r for r in records}
+    labels = []
+    for s in progs:
+        r = rec_by_name.get(s.name)
+        tag = (r["program_name"] or "—") if r else "‼️ нет записи в programdata"
+        labels.append(f"{s.name:26} {tag}")
+    idxs = await ui.checkbox(
+        "Service-файлы (= программы) для операции "
+        "(каждый — отдельная запись programdata; пробел — отметить, enter — ок):",
+        labels, default_all=True)
+    if not idxs:
+        return [], []
+    chosen = {progs[i].name for i in idxs}
+    sel_svcs = [s for s in progs if s.name in chosen]
+    sel_recs = [r for r in records if r["service_name"] in chosen]
+    return sel_svcs, sel_recs
+
+
 async def _resolve_remote_folder(db: Database, project_dir: str):
     """Путь установки (из programdata по service-файлам) + связанные ноды + записи."""
     local_svcs = validate_mod.list_local_services(project_dir)
@@ -83,20 +110,29 @@ async def _resolve_remote_folder(db: Database, project_dir: str):
         local_svcs, linked_ips, records
 
 
-async def _preflight(ssh: SshClient, targets: list, remote_folder: str,
-                     local, service_files: list[str]) -> list | None:
+async def _preflight(ssh: SshClient, db: Database, targets: list, remote_folder: str,
+                     local, service_files: list[str], records: list,
+                     project_dir: str) -> tuple[list, list] | None:
     """Предполётная проверка (первичный деплой / добавление серверов).
 
-      • чисто (нет папки/юнитов) → новый сервер, деплоим;
-      • есть наш VERSION → уже развёрнут → ПРОПУСКАЕМ (обновление — отдельная ветка);
+      • чисто (нет папки/юнитов) → новый сервер, полный деплой;
+      • есть наш VERSION + содержимое СОВПАДАЕТ с локальным (хэш-сверка):
+          — не хватает юнитов/связей → ЛЁГКИЙ путь (доставить юнит + связи в БД, без передеплоя);
+          — всё на месте → пропускаем;
+      • есть VERSION, но содержимое РАСХОДИТСЯ → синхронизация в ветке обновления, пропускаем;
       • папка/юнит без VERSION → чужое/частичное → спросить (перезаписать/пропустить/отмена).
-    Если добавляем новые ноды, а уже развёрнутые на другой версии — предупреждаем о рассинхроне.
-    Возвращает список одобренных нод, либо None — полная отмена.
+    Возвращает (approved_full, light_targets) либо None — полная отмена.
+    light_target: {node, units:[недостающие .service], records:[выбранные записи для привязки]}.
     """
     print("\n── Предполётная проверка нод ──")
     version_path = f"{remote_folder.rstrip('/')}/{config.VERSION_FILE}"
-    approved = []
+    approved: list = []
+    light: list[dict] = []
     deployed: list[tuple[str, str]] = []
+    # к каким нодам уже привязаны выбранные записи (для определения «не хватает связи»)
+    bound: dict[int, set[int]] = {}
+    for r in records:
+        bound[r["program_id"]] = {b["node_id"] for b in await db.get_service_bindings(r["program_id"])}
     for node in targets:
         ip = node["ip_address"]
         name = node["server_name"] or node["hostname"]
@@ -106,8 +142,32 @@ async def _preflight(ssh: SshClient, targets: list, remote_folder: str,
         man = parse_manifest(await ssh.read_file(ip, version_path))
         if man is not None:
             short = man.get("short") or (man.get("commit", "")[:9])
-            print(f"  {name:16} ↩️  уже развёрнут (v{short}) — обновление в отдельной ветке, пропускаю")
-            deployed.append((name, man.get("commit", "")))
+            total, ok, bad = await verify_mod.verify_node(ssh, ip, remote_folder, project_dir)
+            if bad:
+                print(f"  {name:16} ↩️  развёрнут v{short}, но содержимое расходится "
+                      f"({len(bad)}/{total}) — синхронизация в ветке обновления, пропускаю")
+                deployed.append((name, man.get("commit", "")))
+                continue
+            missing_units = [sf for sf in service_files
+                             if not await ssh.path_exists(ip, f"{config.SYSTEMD_DIR}/{sf}")]
+            unbound = [r for r in records if node["id"] not in bound.get(r["program_id"], set())]
+            if not missing_units and not unbound:
+                print(f"  {name:16} ✅ уже полностью развёрнут (код+юниты+связи совпадают)")
+                deployed.append((name, man.get("commit", "")))
+                continue
+            print(f"  {name:16} ✓ код совпадает (v{short}), но не хватает:")
+            if missing_units:
+                print(f"        юниты: {', '.join(missing_units)}")
+            if unbound:
+                print(f"        связи в БД: {', '.join(r['service_name'] for r in unbound)}")
+            ans = (await ui.ask("        [l] доставить юнит(ы) + настроить связи в БД "
+                                "/ [s] пропустить / [a] отмена всего", "l")).lower()
+            if ans == "l":
+                light.append({"node": node, "units": missing_units, "records": records})
+            elif ans == "a":
+                return None
+            else:
+                print("        ⏭️  нода пропущена")
             continue
         folder_exists = await ssh.path_exists(ip, remote_folder)
         existing_units = [sf for sf in service_files
@@ -135,7 +195,7 @@ async def _preflight(ssh: SshClient, targets: list, remote_folder: str,
               f"({', '.join(f'{n}@{s}' for n, s in skewed)}),")
         print(f"     новые серверы получат локальную {local.short}. "
               f"Полная синхронизация всех нод — в ветке обновления.")
-    return approved
+    return approved, light
 
 
 async def _report_units(ssh: SshClient, targets: list, results: list,
@@ -259,14 +319,63 @@ async def _show_deployment_map(db: Database, records: list) -> None:
         print("  (привязок нет — проект ещё нигде не развёрнут; это скорее режим [1] «с нуля»)")
 
 
+async def _install_units_light(db: Database, ssh: SshClient, remote_folder: str,
+                               light_targets: list[dict], local, dry_run: bool) -> bool:
+    """Лёгкий путь: код на ноде уже совпадает с локальным — доставить недостающие юниты
+    в /etc/systemd/system + настроить связи в dispatcher.service_status. Без rsync/provision/VERSION.
+    Возвращает True, если что-то выполнялось (для аудита)."""
+    if not light_targets:
+        return False
+    print(f"\n── Лёгкая доустановка (код совпадает: только юниты + связи в БД)"
+          f"{' [DRY-RUN]' if dry_run else ''} ──")
+    deployer = Deployer(ssh)
+    operator = getpass.getuser()
+    for lt in light_targets:
+        node, units, recs = lt["node"], lt["units"], lt["records"]
+        ip = node["ip_address"]
+        name = node["server_name"] or node["hostname"]
+        if dry_run:
+            print(f"  {name:16} юниты: {', '.join(units) or '—'}; "
+                  f"связи: {', '.join(r['service_name'] for r in recs)}")
+            continue
+        ok = True
+        if units:
+            ok = await deployer.install_services(ip, remote_folder, units)
+            print(f"  {name:16} {'✅' if ok else '⛔'} юниты: {', '.join(units)}")
+        else:
+            print(f"  {name:16} • юниты уже на месте")
+        for r in recs:
+            try:
+                res = await db.bind_service_node(r["program_id"], node["id"], status="standby")
+            except Exception as e:                      # noqa: BLE001 — отчитаться, не падать
+                print(f"      {r['service_name']:24} ❌ привязка не записалась: {e}")
+                continue
+            mark = "✅ привязана [standby]" if res == "inserted" else f"• уже была [{res.split(':', 1)[1]}]"
+            print(f"      {r['service_name']:24} {mark}")
+        for r in recs:
+            await db.journal_write(
+                r["program_id"], node["id"], "attach_unit",
+                folder_deployed=True, service_installed=ok, db_updated=True,
+                result=("ok" if ok else "install_services"), commit=local.commit,
+                operator=operator, details={"ip": ip, "units": units, "light": True})
+    return True
+
+
 async def _deploy_flow(db: Database, ssh: SshClient, project_dir: str, local,
                        remote_folder: str, local_svcs: list, records: list, nodes: list,
                        linked_ips: set, preselect: str | None, dry_run: bool, add_server: bool) -> None:
     """Общий pipeline деплоя для веток «с нуля» и «добавить сервер»."""
+    # Каждый service-файл — отдельная программа (своя запись programdata): уточняем, с какими работаем.
+    local_svcs, records = await _select_services(local_svcs, records)
+    if not local_svcs:
+        print("🛑 Не выбран ни один service-файл.")
+        return
+
     if add_server:
         await _show_deployment_map(db, records)
 
-    if not await validate_mod.validate_paths(db, project_dir):
+    only = {s.name for s in local_svcs if not s.is_template}
+    if not await validate_mod.validate_paths(db, project_dir, only=only):
         print("🛑 Деплой отменён на валидации.")
         return
 
@@ -283,46 +392,60 @@ async def _deploy_flow(db: Database, ssh: SshClient, project_dir: str, local,
                                 f"Выполнить на нодах?"):
                 extra_cmds.append(cmd)
 
-    targets = await _preflight(ssh, targets, remote_folder, local, service_files)
-    if targets is None:
+    pf = await _preflight(ssh, db, targets, remote_folder, local, service_files, records, project_dir)
+    if pf is None:
         print("🛑 Деплой отменён (preflight).")
         return
-    if not targets:
+    targets, light_targets = pf
+    if not targets and not light_targets:
         print("🛑 После предполётной проверки не осталось нод.")
         return
 
-    targets = await _leader_guard(db, records, targets)
-    if not targets:
-        print("🛑 После исключения активных leader-нод не осталось целей.")
-        return
+    if targets:
+        targets = await _leader_guard(db, records, targets)
+        if not targets and not light_targets:
+            print("🛑 После исключения активных leader-нод не осталось целей.")
+            return
 
-    print(f"\nБудет {'СУХОЙ ПРОГОН на' if dry_run else 'задеплоено на'} {len(targets)} нод(ы):")
-    for n in targets:
-        print(f"  • {(n['server_name'] or n['hostname'])} ({n['ip_address']})")
-    prov = ("venv+pip" + (" + " + ", ".join(extra_cmds) if extra_cmds else "")) if config.PROVISION else "нет"
-    print(f"Код → {remote_folder}; юниты → /etc/systemd/system ({len(service_files)} шт.); "
-          f"provisioning: {prov}; версия {local.short}")
-    if not dry_run and not await ui.confirm("Подтвердить деплой?"):
+    # ── план операции ──
+    if targets:
+        print(f"\nБудет {'СУХОЙ ПРОГОН на' if dry_run else 'задеплоено (полностью) на'} {len(targets)} нод(ы):")
+        for n in targets:
+            print(f"  • {(n['server_name'] or n['hostname'])} ({n['ip_address']})")
+        prov = ("venv+pip" + (" + " + ", ".join(extra_cmds) if extra_cmds else "")) if config.PROVISION else "нет"
+        print(f"Код → {remote_folder}; юниты → /etc/systemd/system ({len(service_files)} шт.); "
+              f"provisioning: {prov}; версия {local.short}")
+    if light_targets:
+        print(f"\nЛёгкая доустановка (код уже совпадает) на {len(light_targets)} нод(ы) — "
+              f"только юниты + связи в БД, без передеплоя.")
+
+    if not dry_run and not await ui.confirm("Подтвердить операцию?"):
         print("🛑 Отменено.")
         return
 
-    results = await deploy_mod.deploy(
-        ssh, Deployer(ssh), targets, project_dir, remote_folder, service_files,
-        local, deployed_by=getpass.getuser(),
-        deployed_at=datetime.now().isoformat(timespec="seconds"),
-        extra_cmds=extra_cmds, dry_run=dry_run,
-    )
-    deploy_mod.print_deploy_results(results)
+    results: list = []
+    if targets:
+        results = await deploy_mod.deploy(
+            ssh, Deployer(ssh), targets, project_dir, remote_folder, service_files,
+            local, deployed_by=getpass.getuser(),
+            deployed_at=datetime.now().isoformat(timespec="seconds"),
+            extra_cmds=extra_cmds, dry_run=dry_run,
+        )
+        deploy_mod.print_deploy_results(results)
 
     if dry_run:
+        await _install_units_light(db, ssh, remote_folder, light_targets, local, dry_run=True)
         print("\nСухой прогон — изменений не внесено (provision/юниты/привязки/VERSION пропущены).")
         return
 
-    await _report_units(ssh, targets, results, service_files)
-    await _bind_and_report(db, records, targets, results)
-    await _verify_nodes(ssh, targets, results, remote_folder, project_dir)
-    status_mod.print_status(local, await status_mod.check_status(ssh, targets, remote_folder, local))
-    await _journal_deploy(db, records, targets, results, local, "add_server" if add_server else "deploy")
+    if targets:
+        await _report_units(ssh, targets, results, service_files)
+        await _bind_and_report(db, records, targets, results)
+        await _verify_nodes(ssh, targets, results, remote_folder, project_dir)
+        status_mod.print_status(local, await status_mod.check_status(ssh, targets, remote_folder, local))
+        await _journal_deploy(db, records, targets, results, local, "add_server" if add_server else "deploy")
+
+    await _install_units_light(db, ssh, remote_folder, light_targets, local, dry_run=False)
 
     audit_mod.write({
         "ts": datetime.now().isoformat(timespec="seconds"),
@@ -330,6 +453,8 @@ async def _deploy_flow(db: Database, ssh: SshClient, project_dir: str, local,
         "commit": local.commit, "short": local.short, "dirty": local.dirty,
         "remote_folder": remote_folder, "extra_cmds": extra_cmds,
         "nodes": [{"node": r.node, "ip": r.ip, "ok": r.ok, "step": r.step} for r in results],
+        "light_nodes": [{"node": lt["node"]["server_name"] or lt["node"]["hostname"],
+                         "ip": lt["node"]["ip_address"], "units": lt["units"]} for lt in light_targets],
     })
 
 

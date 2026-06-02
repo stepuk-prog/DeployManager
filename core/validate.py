@@ -137,9 +137,38 @@ def _norm(p: str | None) -> str:
     return (p or "").rstrip("/")
 
 
-async def validate_paths(db: Database, project_dir: str) -> bool:
-    """Сверка + интерактивное разрешение. True — можно деплоить, False — отмена."""
+def _is_blank(p: str | None) -> bool:
+    """folder в БД пуст: NULL или пустая строка/пробелы."""
+    return not (p or "").strip()
+
+
+def _path_diff_note(file_path: str | None, db_path: str | None) -> str:
+    """Короткая пометка, чем отличаются пути, если различие лишь косметическое
+    (регистр / пробелы / лишние слэши). Пустая строка — пути расходятся по существу
+    (разные каталоги). На Linux пути регистрозависимы, поэтому такие различия —
+    всё равно расхождение, но оператору важно видеть его природу."""
+    a, b = file_path or "", db_path or ""
+    collapse = lambda s: re.sub(r"/+", "/", s.strip()).rstrip("/")
+    ca, cb = collapse(a), collapse(b)
+    if ca.casefold() != cb.casefold():
+        return ""  # действительно разные пути — без подсказки
+    kinds = []
+    if ca != cb:
+        kinds.append("регистре")
+    if a.strip() != a or b.strip() != b:
+        kinds.append("пробелах")
+    if collapse(a) != a.strip().rstrip("/") or collapse(b) != b.strip().rstrip("/"):
+        kinds.append("слэшах")
+    return f" (отличие только в {', '.join(kinds)})" if kinds else ""
+
+
+async def validate_paths(db: Database, project_dir: str,
+                         only: set[str] | None = None) -> bool:
+    """Сверка + интерактивное разрешение. True — можно деплоить, False — отмена.
+    only — если задан, валидируем лишь эти service-файлы (+ шаблоны), остальные пропускаем."""
     local = list_local_services(project_dir)
+    if only is not None:
+        local = [s for s in local if s.name in only]  # шаблоны (@) сюда не попадают — они вне деплой-флоу
     if not local:
         print("⚠️  В systemd/ нет service-файлов — нечего валидировать.")
         return True
@@ -163,11 +192,17 @@ async def validate_paths(db: Database, project_dir: str) -> bool:
             if not await _resolve_missing(db, svc):
                 return False
             continue
-        if _norm(svc.working_dir) == _norm(rec["folder"]):
+        if _is_blank(rec["folder"]):
+            all_ok = False
+            print(f"  {svc.name:26} ⚠️ в БД folder = NULL (пусто)")
+            if not await _resolve_null_folder(db, svc, rec):
+                return False
+        elif _norm(svc.working_dir) == _norm(rec["folder"]):
             print(f"  {svc.name:26} ✅ путь совпадает ({rec['folder']})")
         else:
             all_ok = False
-            print(f"  {svc.name:26} ❌ путь расходится:")
+            note = _path_diff_note(svc.working_dir, rec["folder"])
+            print(f"  {svc.name:26} ❌ путь расходится{note}:")
             print(f"      файл: {svc.working_dir}")
             print(f"      БД:   {rec['folder']}")
             if not await _resolve_mismatch(db, svc, rec):
@@ -192,6 +227,30 @@ async def _resolve_missing(db: Database, svc: LocalService) -> bool:
             return True
         if ans == "o":
             print("    ⏭️  Продолжаю без записи (добавишь отдельно).")
+            return True
+        if ans == "a":
+            print("    🛑 Отмена.")
+            return False
+        print("    Не понял, повтори.")
+
+
+async def _resolve_null_folder(db: Database, svc: LocalService, rec) -> bool:
+    """В БД folder = NULL/пусто. Предложить записать путь из service-файла. True — продолжать."""
+    while True:
+        print("    В programdata.folder пусто (NULL). Что делаем?")
+        print(f"      [d] записать путь из файла ({svc.working_dir}) в programdata.folder")
+        print("      [s] пропустить (оставить NULL)")
+        print("      [a] отмена деплоя")
+        ans = (await ui.ask("    Выбор [d/s/a]", "a")).lower()
+        if ans == "d":
+            if _is_blank(svc.working_dir):
+                print("    ⚠️ В service-файле тоже нет WorkingDirectory — нечего записать.")
+                continue
+            await db.update_program_folder(rec["program_id"], _norm(svc.working_dir))
+            print("    ✅ БД обновлена.")
+            return True
+        if ans == "s":
+            print("    ⏭️  Пропущено (folder остался NULL).")
             return True
         if ans == "a":
             print("    🛑 Отмена.")
