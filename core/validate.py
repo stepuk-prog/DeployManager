@@ -110,8 +110,8 @@ async def _check_venv(svc: LocalService) -> None:
         return
     print(f"  {svc.name:26} ⚠️ ExecStart использует venv '{vd}', "
           f"а на серверах ожидается '{config.VENV_DIR}'")
-    ans = (await ui.ask(f"      [f] исправить (/{vd}/bin → /{config.VENV_DIR}/bin) / [s] оставить", "s")).lower()
-    if ans == "f":
+    if await ui.confirm(f"{svc.name}: venv в ExecStart '{vd}' ≠ ожидаемого '{config.VENV_DIR}'. "
+                        f"Исправить (/{vd}/bin → /{config.VENV_DIR}/bin)?"):
         _set_venv(svc, vd, config.VENV_DIR)
         print("      ✅ Исправлено.")
     else:
@@ -125,8 +125,8 @@ async def _check_restart(svc: LocalService) -> None:
     print(f"  {svc.name:26} ⚠️ Restart={svc.restart} (включён)")
     print("      Под Dispatcher автоперезапуск systemd должен быть ВЫКЛЮЧЕН (Restart=no):")
     print("      иначе systemd сам поднимет упавший сервис и сломает failover диспетчера.")
-    ans = (await ui.ask("      [f] исправить (Restart=no) / [s] оставить", "s")).lower()
-    if ans == "f":
+    if await ui.confirm(f"{svc.name}: Restart={svc.restart} (включён), под Dispatcher должен быть "
+                        f"выключен. Исправить на Restart=no?"):
         _set_restart_no(svc)
         print("      ✅ Исправлено.")
     else:
@@ -214,71 +214,61 @@ async def validate_paths(db: Database, project_dir: str,
 
 
 async def _resolve_missing(db: Database, svc: LocalService) -> bool:
-    """Юнита нет в programdata. Возвращает True — продолжать деплой."""
+    """Юнита нет в programdata. Возвращает True — продолжать деплой, False — отмена."""
     from core.programdata import create_record_interactive
-    while True:
-        print("    Записи в programdata нет. Что делаем?")
-        print(f"      [n] создать запись сейчас (service_name={svc.name}, folder={svc.working_dir})")
-        print("      [o] добавить отдельно/позже (продолжить деплой без записи)")
-        print("      [a] отмена деплоя")
-        ans = (await ui.ask("    Выбор [n/o/a]", "a")).lower()
-        if ans == "n":
-            await create_record_interactive(db, service_name=svc.name, folder=svc.working_dir)
-            return True
-        if ans == "o":
-            print("    ⏭️  Продолжаю без записи (добавишь отдельно).")
-            return True
-        if ans == "a":
-            print("    🛑 Отмена.")
-            return False
-        print("    Не понял, повтори.")
+    if not ui.INTERACTIVE:            # неинтерактив (--yes/CLI): безопасно отменяем
+        return False
+    idx = await ui.select(
+        f"{svc.name} — не обнаружен в programdata. Что делаем?",
+        ["✅ Создать запись", "➕ Добавить позже"], default_index=0)
+    if idx == 0:
+        await create_record_interactive(db, service_name=svc.name, folder=svc.working_dir)
+        return True
+    if idx == 1:
+        print("    ⏭️  Продолжаю без записи (добавишь отдельно).")
+        return True
+    print("    🛑 Отмена.")
+    return False
 
 
 async def _resolve_null_folder(db: Database, svc: LocalService, rec) -> bool:
     """В БД folder = NULL/пусто. Предложить записать путь из service-файла. True — продолжать."""
-    while True:
-        print("    В programdata.folder пусто (NULL). Что делаем?")
-        print(f"      [d] записать путь из файла ({svc.working_dir}) в programdata.folder")
-        print("      [s] пропустить (оставить NULL)")
-        print("      [a] отмена деплоя")
-        ans = (await ui.ask("    Выбор [d/s/a]", "a")).lower()
-        if ans == "d":
-            if _is_blank(svc.working_dir):
-                print("    ⚠️ В service-файле тоже нет WorkingDirectory — нечего записать.")
-                continue
-            await db.update_program_folder(rec["program_id"], _norm(svc.working_dir))
-            print("    ✅ БД обновлена.")
-            return True
-        if ans == "s":
-            print("    ⏭️  Пропущено (folder остался NULL).")
-            return True
-        if ans == "a":
-            print("    🛑 Отмена.")
-            return False
-        print("    Не понял, повтори.")
+    if not ui.INTERACTIVE:
+        return False
+    idx = await ui.select(
+        f"{svc.name}: в БД folder = NULL (пусто). Что делаем?",
+        ["📝 Записать путь из файла", "⏭️ Пропустить"], default_index=1)
+    if idx == 0:
+        if _is_blank(svc.working_dir):
+            print("    ⚠️ В service-файле тоже нет WorkingDirectory — нечего записать.")
+            return await _resolve_null_folder(db, svc, rec)
+        await db.update_program_folder(rec["program_id"], _norm(svc.working_dir))
+        print("    ✅ БД обновлена.")
+        return True
+    if idx == 1:
+        print("    ⏭️  Пропущено (folder остался NULL).")
+        return True
+    print("    🛑 Отмена.")
+    return False
 
 
 async def _resolve_mismatch(db: Database, svc: LocalService, rec) -> bool:
     """Интерактивно разрешить расхождение пути. Возвращает True — продолжать."""
-    while True:
-        print("    Что менять?")
-        print(f"      [d] БД → записать путь файла ({svc.working_dir}) в programdata.folder")
-        print(f"      [f] файл → записать путь из БД ({rec['folder']}) в service-файл")
-        print("      [s] пропустить (оставить как есть)")
-        print("      [a] отмена деплоя")
-        ans = (await ui.ask("    Выбор [d/f/s/a]", "a")).lower()
-        if ans == "d":
-            await db.update_program_folder(rec["program_id"], _norm(svc.working_dir))
-            print("    ✅ БД обновлена.")
-            return True
-        if ans == "f":
-            _rewrite_service_path(svc, rec["folder"])
-            print("    ✅ Файл обновлён.")
-            return True
-        if ans == "s":
-            print("    ⏭️  Пропущено (расхождение осталось).")
-            return True
-        if ans == "a":
-            print("    🛑 Отмена.")
-            return False
-        print("    Не понял, повтори.")
+    if not ui.INTERACTIVE:
+        return False
+    idx = await ui.select(
+        f"{svc.name}: путь в файле ({svc.working_dir}) ≠ в БД ({rec['folder']}). Что менять?",
+        ["📝 БД → путь из файла", "📄 Файл → путь из БД", "⏭️ Пропустить"], default_index=2)
+    if idx == 0:
+        await db.update_program_folder(rec["program_id"], _norm(svc.working_dir))
+        print("    ✅ БД обновлена.")
+        return True
+    if idx == 1:
+        _rewrite_service_path(svc, rec["folder"])
+        print("    ✅ Файл обновлён.")
+        return True
+    if idx == 2:
+        print("    ⏭️  Пропущено (расхождение осталось).")
+        return True
+    print("    🛑 Отмена.")
+    return False

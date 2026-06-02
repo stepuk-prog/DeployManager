@@ -160,11 +160,12 @@ async def _preflight(ssh: SshClient, db: Database, targets: list, remote_folder:
                 print(f"        юниты: {', '.join(missing_units)}")
             if unbound:
                 print(f"        связи в БД: {', '.join(r['service_name'] for r in unbound)}")
-            ans = (await ui.ask("        [l] доставить юнит(ы) + настроить связи в БД "
-                                "/ [s] пропустить / [a] отмена всего", "l")).lower()
-            if ans == "l":
+            idx = await ui.select(
+                f"{name}: код совпадает, не хватает юнитов/связей. Действие?",
+                ["✅ Доставить юнит + связи", "⏭️ Пропустить", "🛑 Отмена всего"], default_index=0)
+            if idx == 0:
                 light.append({"node": node, "units": missing_units, "records": records})
-            elif ans == "a":
+            elif idx == 2:
                 return None
             else:
                 print("        ⏭️  нода пропущена")
@@ -181,10 +182,12 @@ async def _preflight(ssh: SshClient, db: Database, targets: list, remote_folder:
             print(f"        папка уже есть: {remote_folder}")
         if existing_units:
             print(f"        юниты уже установлены: {', '.join(existing_units)}")
-        ans = (await ui.ask("        [o] перезаписать / [s] пропустить ноду / [a] отмена всего", "s")).lower()
-        if ans == "o":
+        idx = await ui.select(
+            f"{name}: уже есть папка/юниты (не наш деплой). Что делать?",
+            ["⚠️ Перезаписать", "⏭️ Пропустить ноду", "🛑 Отмена всего"], default_index=1)
+        if idx == 0:
             approved.append(node)
-        elif ans == "a":
+        elif idx == 2:
             return None
         else:
             print("        ⏭️  нода пропущена")

@@ -78,6 +78,10 @@ async def manage(db: Database, project_dir: str, command: str | None = None,
                                     f"РАБОТАЮЩИЙ сервис. Продолжить?"):
                 print(f"  ⏭️  {node} пропущен")
                 continue
-        iid = await db.queue_instruction(rec["service_name"], command, b["node_id"], source="dm")
+        # событие в service_error_log → его id в log_id инструкции (иначе агент падает на
+        # error_handling_log.error_log_id NOT NULL после успешного выполнения).
+        log_id = await db.insert_dm_event(rec["program_id"], b["node_id"], command)
+        iid = await db.queue_instruction(rec["service_name"], command, b["node_id"],
+                                         source="dm", log_id=log_id)
         print(f"  ✓ #{iid}: {command} {rec['service_name']} @ {node} — в очереди watchdog")
         print(f"      → {await _poll(db, iid, poll_timeout)}")

@@ -137,14 +137,28 @@ class Database:
         )
 
     # ----- управление через диспетчер (dispatcher.watchdog_instruction) -----
-    async def queue_instruction(self, service_name: str, command: str, node_id: int,
-                                source: str = "dm") -> int:
-        """Поставить инструкцию watchdog'у (start/stop/restart). Исполняет агент на ноде.
-        source='dm' — отличаем от 'gd' (GlobalDispatcher). Возвращает instruction_id."""
+    async def insert_dm_event(self, service_id: int, node_id: int, command: str) -> int:
+        """Создать в dispatcher.service_error_log «событие» под ручную команду DeployManager
+        и вернуть его id (для watchdog_instruction.log_id). Агент после исполнения пишет
+        error_handling_log с error_log_id = log_id (колонка NOT NULL) — без этого события
+        он падает на NULL. handled=true и собственный error_code='DM_MANUAL' держат строку вне
+        service_error_view (handled=false) — GD её не подхватит (ни инструкций-двойников, ни алертов)."""
         return await self._conn.fetchval(
-            "INSERT INTO dispatcher.watchdog_instruction (service_name, command, node_id, source) "
-            "VALUES ($1, $2, $3, $4) RETURNING instruction_id",
-            service_name, command, node_id, source,
+            "INSERT INTO dispatcher.service_error_log "
+            "(service_id, node_id, error_time, error_code, error_text, handled) "
+            "VALUES ($1, $2, now(), 'DM_MANUAL', $3, true) RETURNING id",
+            service_id, node_id, f"Ручная команда '{command}' через DeployManager",
+        )
+
+    async def queue_instruction(self, service_name: str, command: str, node_id: int,
+                                source: str = "dm", log_id: int | None = None) -> int:
+        """Поставить инструкцию watchdog'у (start/stop/restart). Исполняет агент на ноде.
+        source='dm' — отличаем от 'gd' (GlobalDispatcher). log_id — ссылка на service_error_log
+        (нужна агенту для error_handling_log; см. insert_dm_event). Возвращает instruction_id."""
+        return await self._conn.fetchval(
+            "INSERT INTO dispatcher.watchdog_instruction (service_name, command, node_id, source, log_id) "
+            "VALUES ($1, $2, $3, $4, $5) RETURNING instruction_id",
+            service_name, command, node_id, source, log_id,
         )
 
     async def get_instruction(self, instruction_id: int) -> asyncpg.Record | None:
