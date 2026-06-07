@@ -103,8 +103,19 @@ async def _resolve_remote_folder(db: Database, project_dir: str):
     if len(folders) == 1:
         return folders.pop(), local_svcs, linked_ips, records
     if not folders:
-        return (await _ask("Не нашёл программу в programdata. Путь установки вручную", "") or None), \
-            local_svcs, linked_ips, records
+        # Записей в programdata ещё нет — путь установки берём из WorkingDirectory юнитов
+        # (единственный источник истины для нового деплоя), а не спрашиваем вслепую.
+        wd = {s.working_dir.rstrip("/") for s in local_svcs
+              if not s.is_template and s.working_dir and s.working_dir.startswith("/")}
+        if len(wd) == 1:
+            return wd.pop(), local_svcs, linked_ips, records
+        if not wd:
+            print("🛑 В service-файлах нет абсолютного WorkingDirectory — юниты нерабочие, "
+                  "деплоить некуда. Пропишите WorkingDirectory= (абсолютный путь) в юнитах.")
+        else:
+            print(f"🛑 В юнитах разные WorkingDirectory: {sorted(wd)}. Набор юнитов одного проекта "
+                  f"ставится в ОДНУ папку — приведите WorkingDirectory к единому пути.")
+        return None, local_svcs, linked_ips, records
     print(f"⚠️  В programdata разные пути: {folders}")
     return (await _ask("Укажи путь установки вручную", sorted(folders)[0]) or None), \
         local_svcs, linked_ips, records
@@ -526,9 +537,16 @@ async def run(args=None):
             action = "sync"
         if action == "q":
             return
-        if action == "create":   # служебное (для автоматизации)
+        if action == "create":   # служебное: создать записи programdata для юнитов проекта
             from core.programdata import create_record_interactive
-            await create_record_interactive(db)
+            local = validate_mod.list_local_services(project_dir)
+            names = [s.name for s in local if not s.is_template]
+            existing = {r["service_name"] for r in await db.find_programs_by_service(names)}
+            todo = [s for s in local if not s.is_template and s.name not in existing]
+            if not todo:
+                print("Все юниты проекта уже есть в programdata.")
+            for s in todo:
+                await create_record_interactive(db, project_dir, s.name, s.working_dir)
             return
         if action == "state":     # служебное: обновить running в service_status
             from core import state
@@ -562,18 +580,21 @@ async def run(args=None):
             return
 
         if action == "3":   # ── проверить версии (state-check + дашборд + опц. синхронизация/управление) ──
-            from core import dashboard, state
+            from core import cleanup, dashboard, state
             await state.check_state(ssh, db, project_dir)   # сперва опрос нод → свежий running в БД
             stale = await dashboard.show(ssh, db, project_dir, local)  # дашборд + список отставших нод
+            nodes = await db.get_online_nodes()
             if stale:
                 names = ", ".join(f"{s['name']}({s['lag']})" for s in stale)
                 if await ui.confirm(
                         f"Обнаружен рассинхрон версий на {len(stale)} нод(ах): {names}.\n"
                         f"Синхронизировать их до локальной {local.short}?", danger=True):
                     from core import update
-                    nodes = await db.get_online_nodes()
                     await update.update(ssh, db, project_dir, remote_folder, local_svcs,
                                         records, local, nodes, stale, dry_run=dry_run)
+            # после сведения версий — пост-проверка: лишние файлы на нодах + requirements.txt
+            await cleanup.post_check(ssh, project_dir, remote_folder, nodes, linked_ips, local,
+                                     dry_run=dry_run)
             if await ui.confirm("Управление сервисом (start/stop/restart через диспетчер)?"):
                 from core import watchdog
                 await watchdog.manage(db, project_dir)

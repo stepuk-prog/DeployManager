@@ -201,7 +201,7 @@ async def validate_paths(db: Database, project_dir: str,
         if rec is None:
             print(f"  {svc.name:26} ❌ нет записи в programdata")
             all_ok = False
-            if not await _resolve_missing(db, svc):
+            if not await _resolve_missing(db, project_dir, svc):
                 return False
             continue
         # ── сравнение путей файл ↔ БД; здесь же ловим битые (не абсолютные) пути ──
@@ -237,7 +237,7 @@ async def validate_paths(db: Database, project_dir: str,
     return True
 
 
-async def _resolve_missing(db: Database, svc: LocalService) -> bool:
+async def _resolve_missing(db: Database, project_dir: str, svc: LocalService) -> bool:
     """Юнита нет в programdata. Возвращает True — продолжать деплой, False — отмена."""
     from core.programdata import create_record_interactive
     if not ui.INTERACTIVE:            # неинтерактив (--yes/CLI): безопасно отменяем
@@ -246,7 +246,7 @@ async def _resolve_missing(db: Database, svc: LocalService) -> bool:
         f"{svc.name} — не обнаружен в programdata. Что делаем?",
         ["✅ Создать запись", "➕ Добавить позже"], default_index=0)
     if idx == 0:
-        await create_record_interactive(db, service_name=svc.name, folder=svc.working_dir)
+        await create_record_interactive(db, project_dir, svc.name, svc.working_dir)
         return True
     if idx == 1:
         print("    ⏭️  Продолжаю без записи (добавишь отдельно).")

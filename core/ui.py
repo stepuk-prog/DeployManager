@@ -40,27 +40,54 @@ def _input(prompt: str) -> str:
         return ""
 
 
-async def ask(prompt: str, default: str = "") -> str:
-    """Запросить строку. GUI-бэкенд → диалог; иначе questionary (TTY) / input / default."""
+async def ask(prompt: str, default: str = "", cancelable: bool = False,
+              ok_label: str | None = None, cancel_label: str | None = None) -> str | None:
+    """Запросить строку. GUI-бэкенд → диалог; иначе questionary (TTY) / input / default.
+    cancelable=True — у ввода появляется «Отмена» (→ None = отмена операции; иначе всегда str).
+    ok_label/cancel_label — подписи кнопок в GUI (для мастеров «Продолжить»/«Отмена»)."""
     if _BACKEND is not None:
-        return await _BACKEND.ask(prompt, default)
+        kw: dict[str, Any] = {"cancelable": cancelable} if cancelable else {}
+        if ok_label is not None:
+            kw["ok_label"] = ok_label
+        if cancel_label is not None:
+            kw["cancel_label"] = cancel_label
+        return await _BACKEND.ask(prompt, default, **kw)
     if not INTERACTIVE:
         return default
     if _has_tty():
         try:
             import questionary
             ans = await questionary.text(prompt, default=default).ask_async()
-            return (ans if ans is not None else default).strip() or default
+            if ans is None:                      # Ctrl-C / отмена в questionary
+                return None if cancelable else default
+            return ans.strip() or default
         except (Exception,):
             pass
     return _input(f"{prompt}{(' [' + default + ']') if default else ''}: ") or default
 
 
-async def confirm(prompt: str, danger: bool = False) -> bool:
+async def radio(title: str, labels: list[str], default_index: int = 0) -> int | None:
+    """Выбор ровно одного варианта радиокнопками → индекс (0-based) или None (отмена).
+    GUI-бэкенд → RadioGroup; без GUI — поведение select()."""
+    if not labels:
+        return None
+    if _BACKEND is not None and hasattr(_BACKEND, "radio"):
+        return await _BACKEND.radio(title, labels, default_index)
+    return await select(title, labels, default_index)
+
+
+async def confirm(prompt: str, danger: bool = False,
+                  ok_label: str | None = None, cancel_label: str | None = None) -> bool:
     """Да/нет. GUI-бэкенд → диалог; иначе --yes/неинтерактив/questionary/input.
-    danger=True — деструктивная операция: в GUI «Да» красная + красный текст-предупреждение."""
+    danger=True — деструктивная операция: в GUI «Да» красная + красный текст-предупреждение.
+    ok_label/cancel_label — подписи кнопок в GUI (напр. «Продолжить»/«Отмена»)."""
     if _BACKEND is not None:
-        return bool(await _BACKEND.confirm(prompt, danger=danger))
+        kw: dict[str, Any] = {}
+        if ok_label is not None:
+            kw["ok_label"] = ok_label
+        if cancel_label is not None:
+            kw["cancel_label"] = cancel_label
+        return bool(await _BACKEND.confirm(prompt, danger=danger, **kw))
     if ASSUME_YES:
         return True
     if not INTERACTIVE:
@@ -124,7 +151,9 @@ def _checkbox_text(title: str, labels: list[str]) -> list[int]:
 
 
 async def checkbox(title: str, labels: list[str], default_all: bool = False,
-                   default_checked: list[bool] | None = None) -> list[int]:
+                   default_checked: list[bool] | None = None, ok_label: str | None = None,
+                   cancel_label: str | None = None, danger: bool = False,
+                   dialog_title: str | None = None) -> list[int]:
     """Множественный выбор чек-боксами → список выбранных индексов (0-based). Корутина:
     вся программа крутится в asyncio.run, поэтому используем ask_async() (sync .ask()
     внутри работающего loop падает «run_async was never awaited»).
@@ -139,7 +168,14 @@ async def checkbox(title: str, labels: list[str], default_all: bool = False,
     checked = (default_checked if default_checked and len(default_checked) == len(labels)
                else [default_all] * len(labels))
     if _BACKEND is not None:
-        return await _BACKEND.checkbox(title, labels, default_all, checked)
+        kw: dict[str, Any] = {"danger": danger} if danger else {}
+        if ok_label is not None:
+            kw["ok_label"] = ok_label
+        if cancel_label is not None:
+            kw["cancel_label"] = cancel_label
+        if dialog_title is not None:
+            kw["dialog_title"] = dialog_title
+        return await _BACKEND.checkbox(title, labels, default_all, checked, **kw)
     if not INTERACTIVE:
         if ASSUME_YES:
             return list(range(len(labels)))

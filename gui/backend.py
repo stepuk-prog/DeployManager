@@ -33,7 +33,9 @@ class FletUi:
     def __init__(self, page: ft.Page):
         self.page = page
 
-    async def ask(self, prompt: str, default: str = "") -> str:
+    async def ask(self, prompt: str, default: str = "", cancelable: bool = False,
+                  ok_label: str = "✅ OK", cancel_label: str = "✖️ Отмена") -> str | None:
+        """Ввод строки. cancelable=True — добавляет «Отмена» (→ None = отмена операции)."""
         fut = asyncio.get_running_loop().create_future()
         field = ft.TextField(value=default, autofocus=True, expand=True)
 
@@ -42,12 +44,49 @@ class FletUi:
                 fut.set_result((field.value or default).strip() or default)
             self.page.pop_dialog()
 
+        def cancel(_):
+            if not fut.done():
+                fut.set_result(None)
+            self.page.pop_dialog()
+
+        actions = [_ok_button(ok_label, ok)]
+        if cancelable:
+            actions = [_no_button(cancel_label, cancel), _ok_button(ok_label, ok)]
         self.page.show_dialog(ft.AlertDialog(
-            modal=True, title=ft.Text(prompt), content=field,
-            actions=[_ok_button("✅ OK", ok)]))
+            modal=True, title=ft.Text(prompt), content=field, actions=actions,
+            actions_alignment=ft.MainAxisAlignment.END))
         return await fut
 
-    async def confirm(self, prompt: str, danger: bool = False) -> bool:
+    async def radio(self, title: str, labels: list[str], default_index: int = 0,
+                    ok_label: str = "✅ Продолжить", cancel_label: str = "✖️ Отмена") -> int | None:
+        """Выбор ровно одного варианта радиокнопками → индекс или None (отмена)."""
+        fut = asyncio.get_running_loop().create_future()
+        default = default_index if 0 <= default_index < len(labels) else 0
+        group = ft.RadioGroup(
+            value=str(default),
+            content=ft.Column([ft.Radio(value=str(i), label=lab) for i, lab in enumerate(labels)],
+                              tight=True, spacing=4))
+
+        def ok(_):
+            v = group.value
+            if not fut.done():
+                fut.set_result(int(v) if v is not None and v.isdigit() else None)
+            self.page.pop_dialog()
+
+        def cancel(_):
+            if not fut.done():
+                fut.set_result(None)
+            self.page.pop_dialog()
+
+        self.page.show_dialog(ft.AlertDialog(
+            modal=True, title=_title_with_close("Выбор", cancel),
+            content=ft.Column([ft.Text(title), group], tight=True, spacing=10, width=440),
+            actions=[_no_button(cancel_label, cancel), _ok_button(ok_label, ok)],
+            actions_alignment=ft.MainAxisAlignment.END))
+        return await fut
+
+    async def confirm(self, prompt: str, danger: bool = False,
+                      ok_label: str = "✅ Да", cancel_label: str = "✖️ Нет") -> bool:
         fut = asyncio.get_running_loop().create_future()
 
         def done(val):
@@ -68,8 +107,8 @@ class FletUi:
         else:
             title = ft.Text("Подтверждение")
             content = ft.Text(prompt, width=440)
-            yes = _ok_button("✅ Да", done(True))
-            no = _no_button("✖️ Нет", done(False))
+            yes = _ok_button(ok_label, done(True))
+            no = _no_button(cancel_label, done(False))
 
         self.page.show_dialog(ft.AlertDialog(
             modal=True, title=title, content=content, actions=[yes, no]))
@@ -138,9 +177,12 @@ class FletUi:
         return await fut
 
     async def checkbox(self, title: str, labels: list[str], default_all: bool = False,
-                       default_checked: list[bool] | None = None) -> list[int]:
-        """Компактный диалог-список: пояснение + чек-боксы + «OK»/«Отмена» в ряд.
-        default_checked — по-элементная предотметка (напр. ноды, где программа уже стоит)."""
+                       default_checked: list[bool] | None = None, ok_label: str = "✅ OK",
+                       cancel_label: str = "✖️ Отмена", danger: bool = False,
+                       dialog_title: str = "Выбор нод") -> list[int]:
+        """Компактный диалог-список: пояснение + чек-боксы + кнопки подтверждения/отмены.
+        default_checked — по-элементная предотметка (напр. ноды, где программа уже стоит).
+        danger=True — кнопка подтверждения красная (деструктив, напр. удаление файлов)."""
         fut = asyncio.get_running_loop().create_future()
         checked = (default_checked if default_checked and len(default_checked) == len(labels)
                    else [default_all] * len(labels))
@@ -153,13 +195,15 @@ class FletUi:
                 self.page.pop_dialog()
             return h
 
+        ok_btn = (ft.Button(content=ft.Text(ok_label, color=ft.Colors.WHITE),
+                            bgcolor=ft.Colors.RED, on_click=finish(False))
+                  if danger else _ok_button(ok_label, finish(False)))
         content = ft.Column(
             [ft.Text(title), *boxes],
             scroll=ft.ScrollMode.AUTO, tight=True, spacing=6, width=440,
             height=min(360, 64 + 34 * len(boxes)))
         self.page.show_dialog(ft.AlertDialog(
-            modal=True, title=_title_with_close("Выбор нод", finish(True)), content=content,
-            actions=[_no_button("✖️ Отмена", finish(True)),
-                     _ok_button("✅ OK", finish(False))],
+            modal=True, title=_title_with_close(dialog_title, finish(True)), content=content,
+            actions=[_no_button(cancel_label, finish(True)), ok_btn],
             actions_alignment=ft.MainAxisAlignment.END))
         return await fut
