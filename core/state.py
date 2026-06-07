@@ -4,13 +4,15 @@
 определяем running и текст ошибки, пишем в running/systemd_error/last_running_update.
 Старт/стоп/проверку как управление сервисом делает диспетчер — здесь только снимок состояния.
 """
+import asyncio
+import shlex
 from dataclasses import dataclass
 
 from classes.ssh_client import SshClient
+from core import ui
 from core.validate import list_local_services
 from database import Database
 from logs import get_logger
-import shlex
 
 logger = get_logger(__name__)
 
@@ -58,6 +60,7 @@ async def check_state(ssh: SshClient, db: Database, project_dir: str) -> None:
         print("Программы проекта не найдены в programdata.")
         return
     print("\n══ Проверка состояния сервисов (systemctl → service_status) ══")
+    ui.progress("Опрос состояния сервисов на нодах…")
     for rec in records:
         unit = rec["service_name"]
         bindings = await db.get_service_bindings(rec["program_id"])
@@ -65,10 +68,10 @@ async def check_state(ssh: SshClient, db: Database, project_dir: str) -> None:
         if not bindings:
             print("    — нет привязок")
             continue
-        for b in bindings:
+        states = await asyncio.gather(*[_unit_state(ssh, b["ip_address"], unit) for b in bindings])
+        for b, st in zip(bindings, states):
             ip = b["ip_address"]
             node = b["server_name"] or ip
-            st = await _unit_state(ssh, ip, unit)
             if st is None:
                 print(f"    {node:16} 🔌 недоступна — пропускаю (БД не трогаю)")
                 continue
@@ -76,3 +79,4 @@ async def check_state(ssh: SshClient, db: Database, project_dir: str) -> None:
             icon = "▶ active" if st.running else (f"✗ {st.active}" if st.active else "■ inactive")
             tail = f"  ошибка: {st.error}" if st.error else ""
             print(f"    {node:16} {b['status']:11} {icon}{tail}")
+    ui.progress("")

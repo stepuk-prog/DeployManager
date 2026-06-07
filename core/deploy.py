@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from classes.deployer import Deployer
 from classes.manifest import LocalVersion, build_manifest
 from classes.ssh_client import SshClient
+from core import ui
 from core.verify import local_hashes, remote_hashes
 from settings import config
 
@@ -70,11 +71,19 @@ async def deploy(ssh: SshClient, deployer: Deployer, nodes: list, project_dir: s
     extra_cmds — доп. установки в venv (напр. playwright install firefox); dry_run — предпросмотр."""
     manifest_json = build_manifest(local, deployed_by, deployed_at)
     extra_cmds = extra_cmds or []
-    results = await asyncio.gather(*[
-        _deploy_one(ssh, deployer, n, project_dir, remote_folder, service_files,
-                    manifest_json, extra_cmds, dry_run)
-        for n in nodes
-    ])
+    total = len(nodes)
+    done = {"n": 0}
+    verb = "Предпросмотр" if dry_run else "Деплой"
+    ui.progress(f"{verb}: 0/{total} нод…")
+
+    async def _one(n):
+        r = await _deploy_one(ssh, deployer, n, project_dir, remote_folder, service_files,
+                              manifest_json, extra_cmds, dry_run)
+        done["n"] += 1                         # одиночный поток asyncio → инкремент атомарен
+        ui.progress(f"{verb}: {done['n']}/{total} нод…")
+        return r
+
+    results = await asyncio.gather(*[_one(n) for n in nodes])   # порядок сохраняется
     return list(results)
 
 

@@ -32,6 +32,13 @@ def _title_with_close(text: str, on_close) -> ft.Row:
 class FletUi:
     def __init__(self, page: ft.Page):
         self.page = page
+        self.status_label: ft.Text | None = None   # строка статуса прогресса (задаёт приложение)
+
+    def progress(self, text: str) -> None:
+        """Обновить строку статуса долгой операции (спиннер переключает само приложение)."""
+        if self.status_label is not None:
+            self.status_label.value = text
+            self.page.update()
 
     async def ask(self, prompt: str, default: str = "", cancelable: bool = False,
                   ok_label: str = "✅ OK", cancel_label: str = "✖️ Отмена") -> str | None:

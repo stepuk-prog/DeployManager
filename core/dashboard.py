@@ -4,10 +4,12 @@
 (привязки leader/standby + running), VERSION на ноде (SSH). Отставание считается через
 git rev-list между SHA ноды и локальным (если оба в истории проекта).
 """
+import asyncio
 import subprocess
 
 from classes.manifest import parse_manifest
 from classes.ssh_client import SshClient
+from core import ui
 from core.validate import list_local_services
 from database import Database
 from logs import get_logger
@@ -51,6 +53,7 @@ async def show(ssh: SshClient, db: Database, project_dir: str, local) -> list[di
     if not records:
         print("  Программы проекта не найдены в programdata.")
         return []
+    ui.progress("Опрос версий на нодах…")
     stale: dict[str, dict] = {}                       # ip → инфо (одна нода — один раз)
     for rec in records:
         folder = (rec["folder"] or "").rstrip("/")
@@ -61,10 +64,16 @@ async def show(ssh: SshClient, db: Database, project_dir: str, local) -> list[di
         if not bindings:
             print("    — нет привязок в dispatcher.service_status")
             continue
-        for b in bindings:
+
+        async def _read_ver(ip: str):
+            if not folder:
+                return None
+            return parse_manifest(await ssh.read_file(ip, f"{folder}/{config.VERSION_FILE}"))
+
+        mans = await asyncio.gather(*[_read_ver(b["ip_address"]) for b in bindings])
+        for b, man in zip(bindings, mans):
             ip = b["ip_address"]
             node = b["server_name"] or ip
-            man = parse_manifest(await ssh.read_file(ip, f"{folder}/{config.VERSION_FILE}")) if folder else None
             if man is None:
                 vinfo = "нет VERSION"
             else:
@@ -75,4 +84,5 @@ async def show(ssh: SshClient, db: Database, project_dir: str, local) -> list[di
                     stale[ip] = {"ip": ip, "name": node, "commit": nc, "lag": lag}
             run = "▶ running" if b["running"] else "■ stopped"
             print(f"    {node:16} {b['status']:11} {run:10} {vinfo}")
+    ui.progress("")
     return list(stale.values())

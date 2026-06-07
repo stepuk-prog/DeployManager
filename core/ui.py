@@ -66,6 +66,15 @@ async def ask(prompt: str, default: str = "", cancelable: bool = False,
     return _input(f"{prompt}{(' [' + default + ']') if default else ''}: ") or default
 
 
+def progress(text: str) -> None:
+    """Краткий статус долгой операции (не диалог). GUI → строка статуса + спиннер;
+    CLI → печать. Fire-and-forget, без await (вызывается из горячих циклов)."""
+    if _BACKEND is not None and hasattr(_BACKEND, "progress"):
+        _BACKEND.progress(text)
+    elif INTERACTIVE and text:
+        print(text)
+
+
 async def radio(title: str, labels: list[str], default_index: int = 0) -> int | None:
     """Выбор ровно одного варианта радиокнопками → индекс (0-based) или None (отмена).
     GUI-бэкенд → RadioGroup; без GUI — поведение select()."""

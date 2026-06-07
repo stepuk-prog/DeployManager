@@ -33,6 +33,9 @@ async def main(page: ft.Page):
 
     sink = LogSink(log_view, page)
     flet_ui = FletUi(page)
+    spinner = ft.ProgressRing(visible=False, width=18, height=18)
+    status_lbl = ft.Text("", italic=True, color=ft.Colors.GREY)
+    flet_ui.status_label = status_lbl              # ui.progress(...) пишет сюда
 
     async def choose_project(_):
         path = await file_picker.get_directory_path(
@@ -53,6 +56,9 @@ async def main(page: ft.Page):
     def set_busy(b: bool):
         for btn in branch_buttons:
             btn.disabled = b
+        spinner.visible = b            # крутилка во время операции
+        if not b:
+            status_lbl.value = ""      # очистить статус по завершении
         page.update()
 
     async def run_branch(action: str):
@@ -94,9 +100,10 @@ async def main(page: ft.Page):
             branch("♻️ Обновить .env/юниты", "sync"),
             branch("🗑️ Деинсталляция", "uninstall"),
         ], wrap=True),
-        ft.Row([ft.TextButton(content=ft.Text("🧹 Очистить лог"),
+        ft.Row([spinner, status_lbl,
+                ft.TextButton(content=ft.Text("🧹 Очистить лог"),
                               on_click=lambda _: sink.clear())],
-               alignment=ft.MainAxisAlignment.END),
+               alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
         ft.Container(content=log_view, expand=True, padding=8,
                      border=ft.Border.all(1, ft.Colors.GREY), border_radius=6),
     )
