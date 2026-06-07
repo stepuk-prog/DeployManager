@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from classes.deployer import Deployer
 from classes.manifest import LocalVersion, build_manifest
 from classes.ssh_client import SshClient
+from core.verify import local_hashes, remote_hashes
 from settings import config
 
 
@@ -23,6 +24,17 @@ def node_flags(step: str) -> tuple[bool, bool]:
     return step not in ("ping", "rsync"), step in ("write_version", "done")
 
 
+async def _deps_changed(ssh: SshClient, host: str, remote_folder: str, project_dir: str) -> bool:
+    """Менялся ли requirements.txt относительно ноды (для отчёта об обновлении пакетов).
+    Сверяем ДО rsync: хэш на ноде != локальному → зависимости изменились (на новой ноде
+    файла ещё нет → тоже True). Нет локального requirements.txt → False (нечего ставить)."""
+    lh = local_hashes(project_dir, ["requirements.txt"]).get("requirements.txt")
+    if lh is None:
+        return False
+    rh = (await remote_hashes(ssh, host, remote_folder, ["requirements.txt"])).get("requirements.txt")
+    return rh != lh
+
+
 async def _deploy_one(ssh: SshClient, deployer: Deployer, node, project_dir: str,
                       remote_folder: str, service_files: list[str], manifest_json: str,
                       extra_cmds: list[str], dry_run: bool) -> DeployResult:
@@ -33,10 +45,16 @@ async def _deploy_one(ssh: SshClient, deployer: Deployer, node, project_dir: str
     if dry_run:  # только предпросмотр rsync, без изменений
         ok = await deployer.rsync_project(ip, project_dir, remote_folder, dry_run=True)
         return DeployResult(name, ip, ok, "dry-run")
+    deps_changed = await _deps_changed(ssh, ip, remote_folder, project_dir)  # до rsync — для отчёта
     if not await deployer.rsync_project(ip, project_dir, remote_folder):
         return DeployResult(name, ip, False, "rsync")
-    if config.PROVISION and not await deployer.provision(ip, remote_folder, extra_cmds):
-        return DeployResult(name, ip, False, "provision")
+    if config.PROVISION:
+        if not await deployer.provision(ip, remote_folder, extra_cmds):
+            return DeployResult(name, ip, False, "provision")
+        print(f"  [{name}] пакеты: pip install -r выполнен ✅"
+              + ("  (зависимости изменились)" if deps_changed else ""))
+    elif deps_changed:
+        print(f"  [{name}] ⚠️ зависимости изменились, но PROVISION=0 — пакеты НЕ обновлены")
     if not await deployer.install_services(ip, remote_folder, service_files):
         return DeployResult(name, ip, False, "install_services")
     if not await deployer.write_version(ip, remote_folder, manifest_json):

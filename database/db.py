@@ -365,3 +365,4 @@ class Database:
             "WHERE ss.service_id = $1 ORDER BY ss.status, n.server_name",
             service_id, func="get_service_bindings",
         )
+

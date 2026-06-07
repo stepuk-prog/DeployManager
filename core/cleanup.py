@@ -1,22 +1,20 @@
-"""Пост-проверка после сведения версий (ветка «Проверить версии»):
+"""Пост-проверка после сведения версий (ветка «Проверить версии»): ЛИШНИЕ ФАЙЛЫ.
 
-  1) ЛИШНИЕ ФАЙЛЫ — есть на ноде, но нет в оригинале (минус деплоимый набор, rsync-исключения,
-     VERSION и *.log) → чек-бокс → удалить отмеченные. Только на нодах с СОВПАВШЕЙ версией
-     (иначе «лишнее» неоднозначно: нода может намеренно быть на другой версии).
-  2) requirements.txt РАЗОШЁЛСЯ с локальным → предложить обновить пакеты на ноде
-     (доставить requirements.txt + pip install -r в venv ноды).
+Файлы, которые есть на ноде, но нет в оригинале (минус деплоимый набор, rsync-исключения,
+VERSION и *.log) → чек-бокс → удалить отмеченные. Только на нодах с СОВПАВШЕЙ версией
+(иначе «лишнее» неоднозначно: нода может намеренно быть на другой версии).
+
+Пакеты тут НЕ трогаем: новые библиотеки ставит сама синхронизация версии
+(`update` → provision: pip install -r), отдельная сверка requirements.txt была бы избыточна.
 
 Работаем только по нодам, где проект развёрнут (есть VERSION в remote_folder).
 """
-import base64
-import os
 import shlex
 
-from classes.deployer import Deployer
 from classes.manifest import parse_manifest
 from classes.ssh_client import SshClient
 from core import ui
-from core.verify import _rsync_excluded, deployed_files, local_hashes, remote_hashes
+from core.verify import _rsync_excluded, deployed_files
 from logs import get_logger
 from settings import config
 
@@ -79,47 +77,17 @@ async def _clean_stale(ssh: SshClient, host: str, name: str, folder: str,
           + ("" if res.ok else f" — {res.stderr or res.stdout}"))
 
 
-async def _check_requirements(ssh: SshClient, host: str, name: str, folder: str,
-                              project_dir: str, dry_run: bool) -> None:
-    """requirements.txt на ноде vs локально; при расхождении — доставить и pip install -r."""
-    lh = local_hashes(project_dir, ["requirements.txt"])
-    if "requirements.txt" not in lh:
-        return                                   # у проекта нет requirements.txt — нечего сверять
-    rh = await remote_hashes(ssh, host, folder, ["requirements.txt"])
-    if rh.get("requirements.txt") == lh["requirements.txt"]:
-        print(f"  {name}: requirements.txt совпадает.")
-        return
-    print(f"  {name}: ⚠️ requirements.txt расходится с локальным.")
-    if not await ui.confirm(
-            f"{name}: обновить пакеты (pip install -r requirements.txt) на ноде?", danger=True):
-        print(f"  {name}: пакеты не трогаю.")
-        return
-    if dry_run:
-        print(f"  {name}: [DRY-RUN] доставил бы requirements.txt и обновил пакеты.")
-        return
-    # Доставляем актуальный requirements.txt и ставим зависимости в venv ноды.
-    with open(os.path.join(project_dir, "requirements.txt"), "rb") as fh:
-        b64 = base64.b64encode(fh.read()).decode("ascii")
-    dst = shlex.quote(os.path.join(folder, "requirements.txt"))
-    push = await ssh.run(host, f"sh -c {shlex.quote(f'echo {b64} | base64 -d > {dst}')}", timeout=30)
-    if not push.ok:
-        print(f"  {name}: ❌ не удалось доставить requirements.txt — {push.stderr or push.stdout}")
-        return
-    ok = await Deployer(ssh).provision(host, folder, [])
-    print(f"  {name}: {'✅ пакеты обновлены' if ok else '❌ ошибка обновления пакетов (см. лог)'}.")
-
-
 async def post_check(ssh: SshClient, project_dir: str, remote_folder: str,
                      nodes: list, linked_ips: set, local, dry_run: bool = False) -> None:
-    """После сведения версий: по каждой развёрнутой online-ноде проекта — чистка лишних файлов
-    (на нодах с совпавшей версией) и сверка requirements.txt (с предложением обновить пакеты)."""
+    """После сведения версий: на каждой развёрнутой online-ноде проекта с совпавшей версией —
+    показать лишние файлы (нет в оригинале) и удалить отмеченные."""
     targets = [n for n in nodes if n["ip_address"] in linked_ips]
     if not targets:
         return
-    if not await ui.confirm("Проверить ноды на лишние файлы и расхождение requirements.txt?"):
+    if not await ui.confirm("Проверить ноды на лишние файлы (есть на ноде, нет в оригинале)?"):
         return
     folder = remote_folder.rstrip("/")
-    print("\n── Пост-проверка нод (лишние файлы / requirements) ──")
+    print("\n── Пост-проверка нод: лишние файлы ──")
     for n in targets:
         ip = n["ip_address"]
         name = n["server_name"] or n["hostname"]
@@ -130,8 +98,7 @@ async def post_check(ssh: SshClient, project_dir: str, remote_folder: str,
         if man is None:
             print(f"  {name}: проект не развёрнут (нет VERSION) — пропускаю.")
             continue
-        if man.get("commit") == local.commit:
-            await _clean_stale(ssh, ip, name, folder, project_dir, dry_run)   # версия сведена
-        else:
-            print(f"  {name}: версия не сведена — чистку лишних файлов пропускаю.")
-        await _check_requirements(ssh, ip, name, folder, project_dir, dry_run)
+        if man.get("commit") != local.commit:
+            print(f"  {name}: версия не сведена — пропускаю (сначала синхронизируйте).")
+            continue
+        await _clean_stale(ssh, ip, name, folder, project_dir, dry_run)
