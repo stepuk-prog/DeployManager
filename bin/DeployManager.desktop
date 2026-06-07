@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Deploy Manager
+Comment=Деплой и управление программами на нодах (Flet GUI)
+Exec=/home/vlad/PythonProjects/Helpers/DeployManager/bin/run.sh
+Icon=/home/vlad/PythonProjects/Helpers/DeployManager/icon.png
+Terminal=false
+Type=Application
+Path=/home/vlad/PythonProjects/Helpers/DeployManager
+Categories=Development;
