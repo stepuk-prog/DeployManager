@@ -6,7 +6,9 @@ stop/restart на активном leader — с предупреждением.
 """
 import asyncio
 
+from classes.ssh_client import SshClient
 from core import ui
+from core.state import _unit_state
 from core.validate import list_local_services
 from database import Database
 from logs import get_logger
@@ -15,22 +17,54 @@ logger = get_logger(__name__)
 
 ALLOWED = ("start", "stop", "restart")
 
+# Health-check после команды: пауза перед проверкой + вторая выборка (ловим немедленный crash).
+_HC_GRACE = 6
+_HC_RECHECK = 4
 
-async def _poll(db: Database, instruction_id: int, timeout: int = 60) -> str:
-    """Подождать исполнения инструкции watchdog'ом (poll БД)."""
+
+async def _poll(db: Database, instruction_id: int, timeout: int = 60) -> tuple[bool, str]:
+    """Подождать исполнения инструкции watchdog'ом (poll БД). → (исполнено?, текст)."""
     waited = 0
     while waited < timeout:
         row = await db.get_instruction(instruction_id)
         if row and row["is_executed"]:
-            return f"выполнено: {row['result']} ({row['executed_at']})"
+            return True, f"выполнено: {row['result']} ({row['executed_at']})"
         await asyncio.sleep(2)
         waited += 2
-    return f"ещё не выполнено за {timeout}с — watchdog подхватит позже"
+    return False, f"ещё не выполнено за {timeout}с — watchdog подхватит позже"
 
 
-async def manage(db: Database, project_dir: str, command: str | None = None,
+async def _health_check(ssh: SshClient, ip: str, node: str, unit: str, command: str) -> None:
+    """Сверить фактическое состояние юнита на ноде после команды (через systemctl).
+    start/restart → ждём active + вторая выборка (crash-loop); stop → ждём inactive."""
+    await asyncio.sleep(_HC_GRACE)
+    st = await _unit_state(ssh, ip, unit)
+    if st is None:
+        print(f"      🔌 {node}: недоступна для проверки состояния")
+        return
+    if command == "stop":
+        if st.running:
+            print(f"      ⚠️ {node}: после stop всё ещё active ({st.active})")
+        else:
+            print(f"      ✅ {node}: остановлен ({st.active or 'inactive'})")
+        return
+    # start / restart → ожидаем active
+    if not st.running:
+        err = f" — {st.error}" if st.error else ""
+        print(f"      ❌ {node}: НЕ поднялся ({st.active or 'unknown'}){err}")
+        return
+    await asyncio.sleep(_HC_RECHECK)                          # вторая выборка — поймать crash
+    st2 = await _unit_state(ssh, ip, unit)
+    if st2 is not None and not st2.running:
+        print(f"      ⚠️ {node}: поднялся и тут же упал ({st2.active}/{st2.error or '?'}) — "
+              f"возможен crash-loop")
+    else:
+        print(f"      ✅ {node}: active — сервис поднялся")
+
+
+async def manage(ssh: SshClient, db: Database, project_dir: str, command: str | None = None,
                  preselect: str | None = None, poll_timeout: int = 60) -> None:
-    """Поставить команду сервису на выбранных нодах через watchdog."""
+    """Поставить команду сервису на выбранных нодах через watchdog + health-check состояния."""
     records = await db.find_programs_by_service(
         [s.name for s in list_local_services(project_dir) if not s.is_template])
     if not records:
@@ -84,4 +118,8 @@ async def manage(db: Database, project_dir: str, command: str | None = None,
         iid = await db.queue_instruction(rec["service_name"], command, b["node_id"],
                                          source="dm", log_id=log_id)
         print(f"  ✓ #{iid}: {command} {rec['service_name']} @ {node} — в очереди watchdog")
-        print(f"      → {await _poll(db, iid, poll_timeout)}")
+        executed, msg = await _poll(db, iid, poll_timeout)
+        print(f"      → {msg}")
+        if executed:                              # health-check фактического состояния на ноде
+            print(f"      ⏳ {node}: проверяю состояние сервиса…")
+            await _health_check(ssh, b["ip_address"], node, rec["service_name"], command)

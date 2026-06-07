@@ -123,4 +123,4 @@ async def sync_config(ssh: SshClient, db: Database, project_dir: str, remote_fol
     if await ui.confirm(f"Изменено нод: {changed_nodes}. Перезапустить сервис на них "
                         "(через watchdog), чтобы применить изменения?"):
         from core import watchdog
-        await watchdog.manage(db, project_dir, command="restart")
+        await watchdog.manage(ssh, db, project_dir, command="restart")
