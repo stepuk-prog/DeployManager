@@ -50,6 +50,7 @@ RSYNC_EXCLUDES = [
     ".git", ".venv", "venv", "*.log", "*.session", "files/*",
     "__pycache__", "*.pyc", ".idea", "pictures/new",
     "*.md", ".env.example",
+    ".claude", ".directory", ".vscode",     # dev-артефакты редакторов/инструментов — не деплоим
 ]
 # Что вернуть обратно, даже если попало под exclude (структурный маркер рантайм-папки files/).
 # --include идут ПЕРЕД --exclude (rsync: первое совпавшее правило выигрывает).

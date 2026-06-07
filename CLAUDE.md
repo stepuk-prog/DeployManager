@@ -26,7 +26,7 @@ GitHub: `git@github.com-stepuk:stepuk-prog/DeployManager.git` (alias `github.com
 - `core/state.py` — `systemctl show` → `service_status.running/systemd_error` (без sudo).
 - `core/watchdog.py` — start/stop/restart через `dispatcher.watchdog_instruction` (source='dm'); не дёргаем systemctl напрямую.
 - `core/uninstall.py` — деинсталляция (см. ниже).
-- `core/cleanup.py` — пост-проверка после сведения версий (`post_check`, в ветке «Проверить версии»): по развёрнутым нодам проекта с совпавшей версией — **лишние файлы** (есть на ноде, нет в оригинале: минус `deployed_files`, rsync-исключения, `VERSION`, `*.log`; тяжёлые каталоги venv/.git/`__pycache__` не обходим в `find`) → чек-бокс «🗑️ Удалить»/«Отмена» (по умолч. без галочек) → `rm` под vova. Пакеты тут НЕ трогаем — их ставит сама синхронизация (`update`→provision).
+- `core/cleanup.py` — пост-проверка после сведения версий (`post_check`, в ветке «Проверить версии»): по развёрнутым нодам проекта с совпавшей версией — **лишнее на ноде** → чек-бокс «🗑️ Удалить»/«Отмена» (по умолч. без галочек) → `rm -rf` под vova. Два источника: (а) **удалённые файлы** — есть на ноде, но **физически отсутствуют в `project_dir`** (сверка по файловой системе, НЕ по git: rsync копирует и gitignored-файлы, иначе `.claude` и пр. ложно считались бы лишними); минус rsync-исключения, `VERSION`, `*.log`; (б) **dev-артефакты** `_PURGE_NAMES` (`.claude/.vscode/.idea/.directory`) — исключены из деплоя, но могли остаться от старых выгрузок → сносим целиком. Тяжёлые каталоги (venv/.git/`__pycache__`/`.claude`/`.vscode`) в `find` не обходим. Пакеты НЕ трогаем — их ставит сама синхронизация (`update`→provision).
 - `core/provision.py` — детект пакетов с пост-установкой (playwright → `playwright install <browser>`).
 - `core/audit.py` — файловый audit (`logs/deploy_audit.log`).
 - `cli.py` — `run(args)`, ветки, `_deploy_flow`, `_preflight`, `_leader_guard`, `_bind_and_report`, `_journal_deploy`.
@@ -43,7 +43,7 @@ GitHub: `git@github.com-stepuk:stepuk-prog/DeployManager.git` (alias `github.com
 
 ## SSH / деплой
 - Вход под **vova** (rsync кода/venv/playwright — правильный владелец). У vova **нет passwordless sudo** на части нод → привилегии (юниты в /etc, systemctl) под **root** (`PRIV_USER=root`, тот же ключ). `ssh.run_priv`.
-- rsync **исключает**: `.git .venv venv logs/* files/* __pycache__ *.pyc .idea pictures/new *.md .env.example`. **`.env` ДЕПЛОИТСЯ** (не исключён).
+- rsync **исключает**: `.git .venv venv *.log *.session files/* __pycache__ *.pyc .idea pictures/new *.md .env.example .claude .directory .vscode`. **`.env` ДЕПЛОИТСЯ** (не исключён).
 - provision = venv → pip install -r → playwright install (если есть в requirements; предлагается).
 - `VERSION` — манифест (git SHA) на ноде; по нему статус «up-to-date/stale».
 
