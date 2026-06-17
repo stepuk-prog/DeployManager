@@ -613,6 +613,8 @@ async def run(args=None):
                     from core import update
                     await update.update(ssh, db, project_dir, remote_folder, local_svcs,
                                         records, local, nodes, stale, dry_run=dry_run)
+            # перед проверкой лишних файлов — опц. очистка логов (*.log → truncate -s 0)
+            await cleanup.clear_logs(ssh, remote_folder, nodes, linked_ips, dry_run=dry_run)
             # после сведения версий — пост-проверка: лишние файлы на нодах + requirements.txt
             await cleanup.post_check(ssh, project_dir, remote_folder, nodes, linked_ips, local,
                                      dry_run=dry_run)

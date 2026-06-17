@@ -47,11 +47,13 @@ SYSTEMD_DIR = "/etc/systemd/system"
 #   *.session  — сессии (Telethon-авторизация ноды); приложения работают и без них, не деплоим;
 #   files/*    — прочий рантайм files/ (кроме .gitkeep — он в RSYNC_INCLUDES, чтобы папка создалась).
 RSYNC_EXCLUDES = [
-    ".git", ".venv", "venv", "*.log", "*.session", "files/*",
+    ".git", ".git.backup", ".venv", "venv", "*.log", "*.session", "files/*",
     "__pycache__", "*.pyc", ".idea", "pictures/new",
     "*.md", ".env.example",
     ".claude", ".directory", ".vscode",     # dev-артефакты редакторов/инструментов — не деплоим
 ]
+# NB: rsync-паттерн без слэша/wildcard матчит ТОЧНОЕ имя компонента — ".git" НЕ ловит ".git.backup"
+# (и любые .git-* ). Бэкап git-папки приходится исключать отдельной записью, иначе он уезжает на ноду.
 # Что вернуть обратно, даже если попало под exclude (структурный маркер рантайм-папки files/).
 # --include идут ПЕРЕД --exclude (rsync: первое совпавшее правило выигрывает).
 RSYNC_INCLUDES = ["files/.gitkeep"]
