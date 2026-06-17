@@ -77,7 +77,9 @@ async def sync_config(ssh: SshClient, db: Database, project_dir: str, remote_fol
 
     deployer = Deployer(ssh)
     env_local = _sha_local(env_path) if do_env else None
-    units_local = ({sf: _sha_local(os.path.join(project_dir.rstrip("/"), "systemd", sf))
+    # юниты могут лежать в подкаталогах systemd/ — берём локальный путь из .rel, не плоско по имени
+    rel_by_name = {s.name: s.rel for s in local_svcs}
+    units_local = ({sf: _sha_local(os.path.join(project_dir.rstrip("/"), "systemd", rel_by_name[sf]))
                     for sf in service_files} if do_units else {})
     results = []
     changed_nodes = 0

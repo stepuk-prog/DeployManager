@@ -63,24 +63,45 @@ async def _select_nodes(nodes: list, linked_ips: set[str], preselect: str | None
     return [nodes[i] for i in idxs]
 
 
-async def _select_services(local_svcs: list, records: list) -> tuple[list, list]:
+async def select_services(local_svcs: list, records: list) -> tuple[list, list]:
     """Выбрать, с какими service-файлами (= программами) работаем — каждый файл это отдельная
     запись programdata. Шаблонные юниты (@) — НЕ программы (нет записи в programdata, инстансы
     этим инструментом не привязываются/не запускаются), поэтому в выбор и установку не попадают
     (их исходник всё равно приедет на ноду вместе с папкой через rsync).
+
+    Юниты подаются ПОРЦИЯМИ по каталогам systemd/ (OTC/Binary/Crypto…): если каталогов >1 —
+    сперва выбор каталогов, затем уточнение юнитов внутри выбранных (все предотмечены, лишние
+    можно снять). Один каталог (плоский systemd/) — шаг каталогов пропускается.
     Возвращает (выбранные не-шаблонные local_svcs, выбранные records). При ≤1 программе — без вопроса."""
     progs = [s for s in local_svcs if not s.is_template]
     if len(progs) <= 1:
         return progs, records
     rec_by_name = {r["service_name"]: r for r in records}
+
+    # ── шаг 1: каталоги-порции (если их больше одного) ──
+    groups: dict[str, list] = {}
+    for s in progs:
+        groups.setdefault(s.group, []).append(s)
+    if len(groups) > 1:
+        gnames = sorted(groups, key=lambda g: (g == "", g))   # корень ('') — в конец
+        glabels = [f"{(g or '(корень systemd/)'):20} {len(groups[g]):>3} шт." for g in gnames]
+        gidxs = await ui.checkbox(
+            "Каталоги-порции systemd/ для операции (пробел — отметить, enter — ок):",
+            glabels, default_all=True)
+        if not gidxs:
+            return [], []
+        progs = [s for i in gidxs for s in groups[gnames[i]]]
+
+    # ── шаг 2: уточнение юнитов внутри выбранных каталогов ──
     labels = []
     for s in progs:
         r = rec_by_name.get(s.name)
         tag = (r["program_name"] or "—") if r else "‼️ нет записи в programdata"
-        labels.append(f"{s.name:26} {tag}")
+        gpref = f"{s.group}/" if s.group else ""
+        labels.append(f"{gpref}{s.name:26} {tag}")
     idxs = await ui.checkbox(
         "Service-файлы (= программы) для операции "
-        "(каждый — отдельная запись programdata; пробел — отметить, enter — ок):",
+        "(каждый — отдельная запись programdata; пробел — отметить/снять, enter — ок):",
         labels, default_all=True)
     if not idxs:
         return [], []
@@ -410,7 +431,7 @@ async def _deploy_flow(db: Database, ssh: SshClient, project_dir: str, local,
                        linked_ips: set, preselect: str | None, dry_run: bool, add_server: bool) -> None:
     """Общий pipeline деплоя для веток «с нуля» и «добавить сервер»."""
     # Каждый service-файл — отдельная программа (своя запись programdata): уточняем, с какими работаем.
-    local_svcs, records = await _select_services(local_svcs, records)
+    local_svcs, records = await select_services(local_svcs, records)
     if not local_svcs:
         print("🛑 Не выбран ни один service-файл.")
         return

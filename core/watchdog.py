@@ -65,17 +65,32 @@ async def _health_check(ssh: SshClient, ip: str, node: str, unit: str, command: 
 async def manage(ssh: SshClient, db: Database, project_dir: str, command: str | None = None,
                  preselect: str | None = None, poll_timeout: int = 60) -> None:
     """Поставить команду сервису на выбранных нодах через watchdog + health-check состояния."""
-    records = await db.find_programs_by_service(
-        [s.name for s in list_local_services(project_dir) if not s.is_template])
+    local_svcs = [s for s in list_local_services(project_dir) if not s.is_template]
+    records = await db.find_programs_by_service([s.name for s in local_svcs])
     if not records:
         print("Программы проекта не найдены в programdata.")
         return
 
-    idx = await ui.select("Программа", [r["service_name"] for r in records])
+    # порции по каталогам systemd/ (OTC/Binary/Crypto…): при >1 каталоге сперва сужаем до каталога
+    group_by_name = {s.name: s.group for s in local_svcs}
+    groups: dict[str, list] = {}
+    for r in records:
+        groups.setdefault(group_by_name.get(r["service_name"], ""), []).append(r)
+    recs = records
+    if len(groups) > 1:
+        gnames = sorted(groups, key=lambda g: (g == "", g))   # корень ('') — в конец
+        gi = await ui.select("Каталог-порция systemd/",
+                             [f"{(g or '(корень)')}  ({len(groups[g])} шт.)" for g in gnames])
+        if gi is None:
+            print("Каталог не выбран.")
+            return
+        recs = groups[gnames[gi]]
+
+    idx = await ui.select("Программа", [r["service_name"] for r in recs])
     if idx is None:
         print("Программа не выбрана.")
         return
-    rec = records[idx]
+    rec = recs[idx]
 
     bindings = await db.get_service_bindings(rec["program_id"])
     if not bindings:

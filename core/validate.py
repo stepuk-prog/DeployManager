@@ -24,12 +24,18 @@ _RESTART_RE = re.compile(r"^Restart=(.+)$", re.MULTILINE)
 
 @dataclass
 class LocalService:
-    name: str            # имя файла, напр. binodex-1m-otc.service
+    name: str            # имя файла = имя юнита, напр. binodex-otc-screen-aud-cad.service
     path: str            # абсолютный путь к файлу
+    rel: str             # путь относительно systemd/, напр. OTC/binodex-otc-screen-aud-cad.service
     working_dir: str | None
     exec_start: str | None  # строка ExecStart= целиком
     restart: str | None  # значение Restart= (None если строки нет → systemd по умолч. 'no')
     is_template: bool    # шаблонный юнит (имя с '@')
+
+    @property
+    def group(self) -> str:
+        """Каталог-«порция» внутри systemd/ (OTC/Binary/Crypto…); '' — юнит лежит в корне systemd/."""
+        return os.path.dirname(self.rel)
 
     @property
     def restart_enabled(self) -> bool:
@@ -50,14 +56,15 @@ class LocalService:
         return None
 
 
-def parse_service_file(path: str) -> LocalService:
+def parse_service_file(path: str, rel: str | None = None) -> LocalService:
     text = open(path, encoding="utf-8").read()
     wd = _WORKDIR_RE.search(text)
     ex = _EXEC_RE.search(text)
     rs = _RESTART_RE.search(text)
     name = os.path.basename(path)
+    rel = rel or name                                    # одиночный парс без подкаталога → юнит в корне
     return LocalService(
-        name=name, path=path,
+        name=name, path=path, rel=rel,
         working_dir=wd.group(1).strip() if wd else None,
         exec_start=ex.group(1).strip() if ex else None,
         restart=rs.group(1).strip() if rs else None,
@@ -66,8 +73,24 @@ def parse_service_file(path: str) -> LocalService:
 
 
 def list_local_services(project_dir: str) -> list[LocalService]:
-    paths = sorted(glob.glob(os.path.join(project_dir, "systemd", "*.service")))
-    return [parse_service_file(p) for p in paths]
+    """Все юниты проекта — РЕКУРСИВНО по systemd/ (юниты часто разложены по подкаталогам
+    OTC/Binary/Crypto и т.п.). Имя юнита — basename (в /etc оно плоское и уникальное),
+    подкаталог сохраняется в .rel/.group для группировки выбора и поиска источника при установке."""
+    root = os.path.join(project_dir, "systemd")
+    paths = sorted(glob.glob(os.path.join(root, "**", "*.service"), recursive=True))
+    svcs = [parse_service_file(p, os.path.relpath(p, root)) for p in paths]
+    seen: dict[str, str] = {}                            # имя юнита → первый rel (для детекта дублей)
+    dups = []
+    for s in svcs:
+        if s.name in seen and seen[s.name] != s.rel:
+            dups.append(f"{s.name} ({seen[s.name]} ↔ {s.rel})")
+        else:
+            seen.setdefault(s.name, s.rel)
+    if dups:                                             # имя юнита глобально уникально (ставится плоско в /etc)
+        print("⚠️  Одинаковые имена юнитов в разных подкаталогах systemd/ — установка затрёт друг друга:")
+        for d in dups:
+            print(f"      {d}")
+    return svcs
 
 
 def _rewrite_service_path(svc: LocalService, new_folder: str) -> None:

@@ -120,12 +120,15 @@ class Deployer:
         return await self.install_services(host, remote_folder, service_files)  # cp в /etc + daemon-reload
 
     async def install_services(self, host: str, remote_folder: str, service_files: list[str]) -> bool:
-        """sudo cp юнитов из remote_folder/systemd в /etc/systemd/system + daemon-reload."""
+        """sudo cp юнитов из remote_folder/systemd в /etc/systemd/system + daemon-reload.
+        Юниты могут лежать в подкаталогах (systemd/OTC, systemd/Crypto…) — ищем по имени в дереве
+        (find -print -quit). Имя юнита уникально (в /etc оно плоское). Пустой find → cp падает явно."""
         if not service_files:
             return True
+        sd = shlex.quote(os.path.join(remote_folder, "systemd"))
         cps = []
         for name in service_files:
-            src = shlex.quote(os.path.join(remote_folder, "systemd", name))
+            src = f'"$(find {sd} -name {shlex.quote(name)} -print -quit)"'
             dst = shlex.quote(os.path.join(config.SYSTEMD_DIR, name))
             cps.append(f"cp {src} {dst}")
         inner = " && ".join(cps + ["systemctl daemon-reload"])
