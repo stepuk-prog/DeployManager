@@ -2,6 +2,26 @@
 
 Все значимые изменения DeployManager. Формат — по разделам Added / Changed / Fixed.
 
+## 2026-06-26
+
+### Changed
+- **Управление сервисом — через GlobalDispatcher (§13), а не raw `watchdog_instruction`.**
+  `core/watchdog.manage` больше НЕ ставит сырую инструкцию агенту на конкретной ноде —
+  подаёт намерение (start/stop/restart) в `dispatcher.control_request` (`source='dm'`), а
+  размещение и исполнение (с honest-verify) делает GD: `start` — лучшая нода по rang,
+  `stop`/`restart` — лидер. Поэтому **выбор конкретной ноды убран** (привязки показываются
+  как инфо). Перед подачей DeployManager **включает диспетчера** (`programdata.dispatcher=true`):
+  GD управляет только `dispatcher=true` (иначе намерение терминируется как `NonDispatcher`).
+  Исход поллится из `control_request` (completed / failed / cancelled / NonDispatcher) с
+  понятным сообщением — таймаута-зависания больше нет.
+- **Убраны raw-методы** `db.insert_dm_event` / `queue_instruction` / `get_instruction` и
+  per-node health-check в `manage` (GD верифицирует сам). `manage(db, project_dir, command)` —
+  сигнатура без `ssh`/`preselect`.
+
+### Note
+- Требует GD с регистрацией source `'dm'` (OPERATOR_SOURCES + SOURCE_LABELS→DeployManager) —
+  задеплоено на cluster1/2/3 2026-06-26.
+
 ## 2026-06-17
 
 ### Fixed

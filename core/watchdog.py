@@ -1,14 +1,14 @@
-"""Управление сервисами через диспетчер: ставим инструкцию в dispatcher.watchdog_instruction.
+"""Управление сервисами через GlobalDispatcher (§13): намерение в dispatcher.control_request.
 
-Сами systemctl НЕ дёргаем — команду (start/stop/restart) исполняет watchdog-агент на ноде
-(он же пишет executed_at/result). Это штатный путь, не конфликтующий с failover диспетчера.
-stop/restart на активном leader — с предупреждением.
+DeployManager НЕ ставит raw watchdog_instruction и НЕ дёргает systemctl — подаёт НАМЕРЕНИЕ
+(start/stop/restart) в control_request, а GD подбирает placement (start — лучшая нода по rang;
+stop/restart — лидер) и исполняет через lifecycle с honest-verify. Размещение — за GD, поэтому
+конкретную ноду НЕ выбираем (привязки показываем как инфо). Перед подачей включаем диспетчера
+(programdata.dispatcher=true): GD управляет ТОЛЬКО dispatcher=true (иначе терминал NonDispatcher).
 """
 import asyncio
 
-from classes.ssh_client import SshClient
 from core import ui
-from core.state import _unit_state
 from core.validate import list_local_services
 from database import Database
 from logs import get_logger
@@ -17,54 +17,51 @@ logger = get_logger(__name__)
 
 ALLOWED = ("start", "stop", "restart")
 
-# Health-check после команды: пауза перед проверкой + вторая выборка (ловим немедленный crash).
-_HC_GRACE = 6
-_HC_RECHECK = 4
+# Поллинг исхода control_request у GD (lifecycle + verify может занять десятки секунд).
+_POLL_TIMEOUT = 90
+_POLL_INTERVAL = 2
 
 
-async def _poll(db: Database, instruction_id: int, timeout: int = 60) -> tuple[bool, str]:
-    """Подождать исполнения инструкции watchdog'ом (poll БД). → (исполнено?, текст)."""
+def _print_terminal(command: str, service_name: str, row) -> None:
+    """Печать терминального исхода намерения GD."""
+    st = row["req_status"]
+    if st == "completed":
+        node = row["actual_node_id"]
+        node_txt = f" (node {node})" if node is not None else ""
+        print(f"      ✅ {command} {service_name} выполнено и верифицировано GD{node_txt}.")
+    elif st == "failed":
+        detail = row["completion_result"] or row["instr_status"] or "см. логи GD"
+        print(f"      ❌ {command} {service_name}: {detail}.")
+    elif st == "NonDispatcher":
+        print(f"      ⚠️ {command} {service_name}: программа вне власти GD (dispatcher=false). "
+              f"{row['decided_reason'] or ''}".rstrip())
+    else:  # cancelled
+        print(f"      ⚠️ GD отклонил {command} {service_name}: {row['decided_reason'] or '—'}")
+
+
+async def _poll_outcome(db: Database, request_id: int, command: str, service_name: str,
+                        timeout: int = _POLL_TIMEOUT) -> None:
+    """Подождать терминала control_request у GD (poll БД) + напечатать исход."""
     waited = 0
+    last_status = "pending"
     while waited < timeout:
-        row = await db.get_instruction(instruction_id)
-        if row and row["is_executed"]:
-            return True, f"выполнено: {row['result']} ({row['executed_at']})"
-        await asyncio.sleep(2)
-        waited += 2
-    return False, f"ещё не выполнено за {timeout}с — watchdog подхватит позже"
+        row = await db.poll_request(request_id)
+        if row is None:
+            print(f"      ❌ control_request#{request_id} исчез.")
+            return
+        last_status = row["req_status"]
+        if last_status in ("completed", "failed", "cancelled", "NonDispatcher"):
+            _print_terminal(command, service_name, row)
+            return
+        await asyncio.sleep(_POLL_INTERVAL)
+        waited += _POLL_INTERVAL
+    print(f"      ⏱ GD не довёл {command} {service_name} за {timeout}с "
+          f"(control_request#{request_id} ещё '{last_status}'). GD запущен и есть лидер?")
 
 
-async def _health_check(ssh: SshClient, ip: str, node: str, unit: str, command: str) -> None:
-    """Сверить фактическое состояние юнита на ноде после команды (через systemctl).
-    start/restart → ждём active + вторая выборка (crash-loop); stop → ждём inactive."""
-    await asyncio.sleep(_HC_GRACE)
-    st = await _unit_state(ssh, ip, unit)
-    if st is None:
-        print(f"      🔌 {node}: недоступна для проверки состояния")
-        return
-    if command == "stop":
-        if st.running:
-            print(f"      ⚠️ {node}: после stop всё ещё active ({st.active})")
-        else:
-            print(f"      ✅ {node}: остановлен ({st.active or 'inactive'})")
-        return
-    # start / restart → ожидаем active
-    if not st.running:
-        err = f" — {st.error}" if st.error else ""
-        print(f"      ❌ {node}: НЕ поднялся ({st.active or 'unknown'}){err}")
-        return
-    await asyncio.sleep(_HC_RECHECK)                          # вторая выборка — поймать crash
-    st2 = await _unit_state(ssh, ip, unit)
-    if st2 is not None and not st2.running:
-        print(f"      ⚠️ {node}: поднялся и тут же упал ({st2.active}/{st2.error or '?'}) — "
-              f"возможен crash-loop")
-    else:
-        print(f"      ✅ {node}: active — сервис поднялся")
-
-
-async def manage(ssh: SshClient, db: Database, project_dir: str, command: str | None = None,
-                 preselect: str | None = None, poll_timeout: int = 60) -> None:
-    """Поставить команду сервису на выбранных нодах через watchdog + health-check состояния."""
+async def manage(db: Database, project_dir: str, command: str | None = None,
+                 poll_timeout: int = _POLL_TIMEOUT) -> None:
+    """Подать команду сервису через GlobalDispatcher (§13). Размещение — за GD."""
     local_svcs = [s for s in list_local_services(project_dir) if not s.is_template]
     records = await db.find_programs_by_service([s.name for s in local_svcs])
     if not records:
@@ -92,23 +89,15 @@ async def manage(ssh: SshClient, db: Database, project_dir: str, command: str | 
         return
     rec = recs[idx]
 
+    # Привязки — ТОЛЬКО как инфо (размещение решает GD, ноду не выбираем).
     bindings = await db.get_service_bindings(rec["program_id"])
-    if not bindings:
-        print("У программы нет привязок к нодам (dispatcher.service_status).")
-        return
-    labels = [f"{(b['server_name'] or b['ip_address']):16} rang={b['rang']!s:>4} "
-              f"[{b['status']}] running={b['running']}"
-              for b in bindings]
-    if preselect:
-        idxs = (list(range(len(bindings))) if preselect.lower() == "all"
-                else [int(t) - 1 for t in preselect.replace(" ", "").split(",")
-                      if t.isdigit() and 1 <= int(t) <= len(bindings)])
+    if bindings:
+        print(f"  Текущее размещение {rec['service_name']} (выбор ноды — за GD):")
+        for b in bindings:
+            node = b["server_name"] or b["ip_address"]
+            print(f"    • {node:16} rang={b['rang']!s:>4} [{b['status']}] running={b['running']}")
     else:
-        idxs = await ui.checkbox(f"Ноды для {rec['service_name']}:", labels)
-    chosen = [bindings[i] for i in idxs]
-    if not chosen:
-        print("Ноды не выбраны.")
-        return
+        print("  У программы нет привязок к нодам — GD разместит на доступном кандидате.")
 
     if not command:
         ci = await ui.select("Команда", list(ALLOWED), default_index=ALLOWED.index("restart"))
@@ -120,21 +109,20 @@ async def manage(ssh: SshClient, db: Database, project_dir: str, command: str | 
         print(f"Команда должна быть из {ALLOWED}.")
         return
 
-    for b in chosen:
-        node = b["server_name"] or b["ip_address"]
-        if command in ("stop", "restart") and b["status"] == "leader":
-            if not await ui.confirm(f"  ⚠️ {node} — leader. '{command}' остановит/перезапустит "
-                                    f"РАБОТАЮЩИЙ сервис. Продолжить?"):
-                print(f"  ⏭️  {node} пропущен")
-                continue
-        # событие в service_error_log → его id в log_id инструкции (иначе агент падает на
-        # error_handling_log.error_log_id NOT NULL после успешного выполнения).
-        log_id = await db.insert_dm_event(rec["program_id"], b["node_id"], command)
-        iid = await db.queue_instruction(rec["service_name"], command, b["node_id"],
-                                         source="dm", log_id=log_id)
-        print(f"  ✓ #{iid}: {command} {rec['service_name']} @ {node} — в очереди watchdog")
-        executed, msg = await _poll(db, iid, poll_timeout)
-        print(f"      → {msg}")
-        if executed:                              # health-check фактического состояния на ноде
-            print(f"      ⏳ {node}: проверяю состояние сервиса…")
-            await _health_check(ssh, b["ip_address"], node, rec["service_name"], command)
+    if command in ("stop", "restart") and any(b["status"] == "leader" for b in bindings):
+        if not await ui.confirm(f"  ⚠️ '{command}' через GD затронет РАБОТАЮЩИЙ сервис "
+                                f"{rec['service_name']} (на лидере). Продолжить?"):
+            print("  ⏭️  Отменено.")
+            return
+
+    # Включить диспетчера: GD управляет только dispatcher=true (иначе NonDispatcher).
+    enabled = await db.enable_dispatcher(rec["program_id"])
+    if enabled is not None:
+        print(f"  🧰 Диспетчер включён для {rec['service_name']} (был выключен) — отдаю под GD.")
+
+    req_id = await db.submit_control_request(
+        rec["program_id"], rec["service_name"], command, source="dm",
+    )
+    print(f"  ✓ control_request#{req_id}: {command} {rec['service_name']} → GD (source=dm). "
+          f"Жду исполнения…")
+    await _poll_outcome(db, req_id, command, rec["service_name"], poll_timeout)

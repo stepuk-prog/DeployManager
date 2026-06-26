@@ -277,39 +277,52 @@ class Database:
             mode="execute", func="update_service_state",
         )
 
-    # ----- управление через диспетчер (dispatcher.watchdog_instruction) -----
-    async def insert_dm_event(self, service_id: int, node_id: int, command: str) -> int:
-        """Создать в dispatcher.service_error_log «событие» под ручную команду DeployManager
-        и вернуть его id (для watchdog_instruction.log_id). Агент после исполнения пишет
-        error_handling_log с error_log_id = log_id (колонка NOT NULL) — без этого события
-        он падает на NULL. handled=true и собственный error_code='DM_MANUAL' держат строку вне
-        service_error_view (handled=false) — GD её не подхватит (ни инструкций-двойников, ни алертов)."""
+    # ----- управление через диспетчер: §13 (control_request → GD), см. ниже -----
+    # (raw insert_dm_event/queue_instruction/get_instruction убраны 2026-06-26 —
+    #  миграция управления на control_request; GD сам размещает и верифицирует.)
+
+    # ----- §13: управление через GlobalDispatcher (control_request), не raw -----
+    async def enable_dispatcher(self, program_id: int) -> int | None:
+        """
+        Включить диспетчера для программы (programdata.dispatcher=true). Нужно ДО
+        подачи control_request: GD управляет ТОЛЬКО dispatcher=true (иначе пометит
+        намерение терминалом 'NonDispatcher'). Возвращает program_id если флаг
+        реально подняли (был false), иначе None (уже был true) — для отчёта."""
         return await self._query(
-            "INSERT INTO dispatcher.service_error_log "
-            "(service_id, node_id, error_time, error_code, error_text, handled) "
-            "VALUES ($1, $2, now(), 'DM_MANUAL', $3, true) RETURNING id",
-            service_id, node_id, f"Ручная команда '{command}' через DeployManager",
-            mode="val", func="insert_dm_event", retry=False,
+            "UPDATE program.programdata SET dispatcher = true "
+            "WHERE program_id = $1 AND dispatcher IS DISTINCT FROM true "
+            "RETURNING program_id",
+            program_id, mode="val", func="enable_dispatcher",
         )
 
-    async def queue_instruction(self, service_name: str, command: str, node_id: int,
-                                source: str = "dm", log_id: int | None = None) -> int:
-        """Поставить инструкцию watchdog'у (start/stop/restart). Исполняет агент на ноде.
-        source='dm' — отличаем от 'gd' (GlobalDispatcher). log_id — ссылка на service_error_log
-        (нужна агенту для error_handling_log; см. insert_dm_event). Возвращает instruction_id."""
+    async def submit_control_request(self, program_id: int, service_name: str,
+                                     command: str, source: str = "dm") -> int:
+        """
+        Подать намерение (start/stop/restart) в dispatcher.control_request (source='dm').
+        GD CronRequestHandler подберёт placement и исполнит через lifecycle (desired-state
+        status ставит сам GD). Ни SSH, ни raw watchdog_instruction. Возвращает request_id.
+        retry=False — не задвоить намерение при ambiguous-обрыве."""
         return await self._query(
-            "INSERT INTO dispatcher.watchdog_instruction (service_name, command, node_id, source, log_id) "
-            "VALUES ($1, $2, $3, $4, $5) RETURNING instruction_id",
-            service_name, command, node_id, source, log_id,
-            mode="val", func="queue_instruction", retry=False,
+            "INSERT INTO dispatcher.control_request "
+            "(program_id, service_name, command, status, source) "
+            "VALUES ($1, $2, $3, 'pending', $4) RETURNING request_id",
+            program_id, service_name, command, source,
+            mode="val", func="submit_control_request", retry=False,
         )
 
-    async def get_instruction(self, instruction_id: int) -> asyncpg.Record | None:
-        """Состояние инструкции (для ожидания результата)."""
+    async def poll_request(self, request_id: int) -> asyncpg.Record | None:
+        """
+        Снимок исхода намерения: req_status pending→approved→completed/failed/
+        cancelled/NonDispatcher (последний — программа вне власти GD). actual_node_id —
+        куда GD разместил. instr_status — статус связанной watchdog_instruction."""
         return await self._query(
-            "SELECT is_executed, executed_at, result FROM dispatcher.watchdog_instruction "
-            "WHERE instruction_id = $1",
-            instruction_id, mode="row", func="get_instruction",
+            "SELECT cr.status AS req_status, cr.decided_reason, cr.completion_result, "
+            "       cr.actual_node_id, wi.status AS instr_status "
+            "FROM dispatcher.control_request cr "
+            "LEFT JOIN dispatcher.watchdog_instruction wi "
+            "       ON wi.instruction_id = cr.instruction_id "
+            "WHERE cr.request_id = $1",
+            request_id, mode="row", func="poll_request",
         )
 
     async def unbind_service_node(self, service_id: int, node_id: int) -> str:
