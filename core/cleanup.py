@@ -222,7 +222,12 @@ async def _prompt_clear(ssh: SshClient, host: str, name: str, folder: str,
         print(f"  {name}: [DRY-RUN] обнулил бы {len(chosen)} ({_human(freed)}): {', '.join(chosen)}")
         return
     quoted = " ".join(shlex.quote(p) for p in chosen)
-    res = await ssh.run(host, f"cd {shlex.quote(folder)} && truncate -s 0 -- {quoted}", timeout=120)
+    cmd = f"cd {shlex.quote(folder)} && truncate -s 0 -- {quoted}"
+    res = await ssh.run(host, cmd, timeout=120)
+    # Часть логов пишет сервис под root → файл root-owned, vova не может truncate
+    # ('Permission denied'). truncate -s 0 не меняет владельца → повтор под root безопасен.
+    if not res.ok and "ermission denied" in (res.stderr or res.stdout):
+        res = await ssh.run_priv(host, cmd, timeout=120)
     print(f"  {name}: {'✅ обнулено' if res.ok else '❌ ошибка'} {len(chosen)} шт. ({_human(freed)})"
           + ("" if res.ok else f" — {res.stderr or res.stdout}"))
 
