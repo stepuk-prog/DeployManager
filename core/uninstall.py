@@ -155,6 +155,14 @@ async def uninstall(ssh: SshClient, db: Database, project_dir: str, preselect: s
         "Каскадное удаление сотрёт ВСЮ информацию о данной программе (привязки, "
         "настройки, логи и т.д.). Действие НЕОБРАТИМО.",
         danger=True):
+        names = ", ".join(p.get("service_name") or str(p["program_id"]) for p in programs)
+        if not await ui.confirm(
+            f"⚠️⚠️ Подтвердите окончательно: удалить из programdata ({len(programs)}):\n"
+            f"{names}\n"
+            "Это последнее предупреждение — записи будут стёрты безвозвратно.",
+            danger=True):
+            print("Записи в programdata оставлены.")
+            return
         for p in programs:
             await db.delete_program(p["program_id"])
             await db.journal_write(p["program_id"], None, "uninstall", False, False, True,
