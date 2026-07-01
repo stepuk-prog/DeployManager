@@ -173,7 +173,7 @@ class Database:
     async def get_online_nodes(self) -> list[asyncpg.Record]:
         """Online-ноды из vocabulary.nodes."""
         return await self._query(
-            "SELECT id, hostname, server_name, ip_address, description, is_online "
+            "SELECT id, hostname, server_name, ip_address, description, is_online, claster "
             "FROM vocabulary.nodes WHERE is_online = TRUE "
             "ORDER BY server_name",
             func="get_online_nodes",

@@ -40,9 +40,11 @@ class Deployer:
         return True, (out or b"").decode(errors="replace")
 
     async def rsync_project(self, host: str, project_dir: str, remote_folder: str,
-                            dry_run: bool = False) -> bool:
+                            dry_run: bool = False, extra_excludes: list[str] | None = None) -> bool:
         """rsync содержимого project_dir → vova@host:remote_folder (под vova, верный владелец).
-        dry_run=True — предпросмотр (rsync -n -i, без изменений)."""
+        dry_run=True — предпросмотр (rsync -n -i, без изменений).
+        extra_excludes — доп. паттерны --exclude поверх config.RSYNC_EXCLUDES (напр. '.env'
+        при деплое инфра-компонентов: прод-конфиг на ноде не затираем локальным)."""
         folder = remote_folder.rstrip("/")
         if not dry_run:  # создаём каталог явно (совместимо со старым rsync без --mkpath)
             mk = await self.ssh.run(host, f"mkdir -p {shlex.quote(folder)}", timeout=15)
@@ -60,6 +62,8 @@ class Deployer:
         for inc in config.RSYNC_INCLUDES:       # include ПЕРЕД exclude (первое правило выигрывает)
             cmd.append(f"--include={inc}")
         for ex in config.RSYNC_EXCLUDES:
+            cmd.append(f"--exclude={ex}")
+        for ex in (extra_excludes or []):
             cmd.append(f"--exclude={ex}")
         cmd += [src, dst]
         logger.info("rsync%s → %s:%s", " (dry-run)" if dry_run else "", host, folder)

@@ -61,8 +61,10 @@ async def main(page: ft.Page):
             status_lbl.value = ""      # очистить статус по завершении
         page.update()
 
-    async def run_branch(action: str):
-        if not state["path"]:
+    async def run_branch(action: str, component: str | None = None):
+        # infra-деплой (GD/WD/CD/DispatcherCtl) папку проекта НЕ требует — путь берётся из реестра.
+        # Действие (деплой / сверка версий / dry-run) выбирается меню'ю в самом infra-флоу.
+        if action != "infra" and not state["path"]:
             sink.write("Сначала выберите папку проекта (кнопка «Обзор…»).\n")
             return
         set_busy(True)
@@ -71,7 +73,7 @@ async def main(page: ft.Page):
         ui.set_backend(flet_ui)
         try:
             args = Namespace(project=state["path"], action=action, nodes=None,
-                             dry_run=False, yes=False, command=None)
+                             dry_run=False, yes=False, command=None, component=component, check=False)
             await cli.run(args)
         except SystemExit:
             pass
@@ -89,6 +91,16 @@ async def main(page: ft.Page):
         branch_buttons.append(btn)
         return btn
 
+    def infra_btn(label: str, component: str) -> ft.Control:
+        # control-plane группа (GD/WD/CD/DispatcherCtl) — отдельный цвет, чтобы визуально
+        # отделить инфра-деплой от обычных бот-веток
+        btn = ft.Button(
+            content=ft.Text(label, color=ft.Colors.WHITE),
+            bgcolor=ft.Colors.INDIGO_600,
+            on_click=lambda e, c=component: page.run_task(run_branch, "infra", c))
+        branch_buttons.append(btn)
+        return btn
+
     page.add(
         ft.Row([path_field, ft.Button(content=ft.Text("📂 Обзор…"), on_click=choose_project)]),
         ft.Row([ft.Text("Версия:"), version_lbl]),
@@ -99,6 +111,14 @@ async def main(page: ft.Page):
             branch("🎛️ Управление", "manage"),
             branch("♻️ Обновить .env/юниты", "sync"),
             branch("🗑️ Деинсталляция", "uninstall"),
+        ], wrap=True),
+        ft.Row([ft.Text("Control-plane (без выбора проекта):", italic=True,
+                        color=ft.Colors.INDIGO_300)]),
+        ft.Row([
+            infra_btn("🌐 GD", "GD"),
+            infra_btn("🌐 WD", "WD"),
+            infra_btn("🌐 CD", "CD"),
+            infra_btn("🌐 DispatcherCtl", "DispatcherCtl"),
         ], wrap=True),
         ft.Row([spinner, status_lbl,
                 ft.TextButton(content=ft.Text("🧹 Очистить лог"),

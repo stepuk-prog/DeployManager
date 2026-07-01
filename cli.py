@@ -23,7 +23,7 @@ from settings import config
 # Три основные ветки + служебные действия для автоматизации.
 _ACTION_MAP = {"new": "1", "add": "2", "check": "3", "dashboard": "3", "status": "3",
                "create": "create", "state": "state", "manage": "manage", "uninstall": "uninstall",
-               "sync": "sync", "env": "sync"}
+               "sync": "sync", "env": "sync", "infra": "infra"}
 
 
 async def _ask(prompt: str, default: str = "") -> str:
@@ -533,15 +533,6 @@ async def run(args=None):
     dry_run = bool(args and getattr(args, "dry_run", False))
     preselect = getattr(args, "nodes", None) if args else None
 
-    project_dir = (args.project if args and args.project else await _ask("Папка проекта", os.getcwd()))
-    project_dir = os.path.abspath(os.path.expanduser(project_dir))
-    if not os.path.isdir(os.path.join(project_dir, "systemd")):
-        print(f"⚠️  В {project_dir} нет папки systemd/ — продолжаю, но юниты ставить нечего.")
-
-    local = local_version(project_dir)
-    print(f"Проект: {project_dir}\nВерсия: {local.short} ({local.branch})"
-          f"{'  ⚠️ DIRTY (незакоммичено)' if local.dirty else ''}{'  [DRY-RUN]' if dry_run else ''}")
-
     db = Database()
     await db.connect()
     ssh = SshClient()
@@ -553,11 +544,32 @@ async def run(args=None):
             "  [2] добавить сервер к существующему деплою\n"
             "  [3] проверить версии на серверах (vs локальной)\n"
             "  [4] обновить .env / service-файлы на серверах (без передеплоя)\n"
+            "  [5] деплой инфра-компонента диспетчера (GD / WD / CD / DispatcherCtl)\n"
             "  [q] выход\nВыбор", "1")
         if action == "4":
             action = "sync"
+        if action == "5":
+            action = "infra"
         if action == "q":
             return
+        if action == "infra":   # control-plane (GD/WD/CD/DispatcherCtl) — в обход programdata
+            from core import infra_deploy
+            # операция из флагов; иначе None → infra-флоу спросит меню'ю (как в GUI по кнопке)
+            op = "check" if getattr(args, "check", False) else ("dry-run" if dry_run else None)
+            await infra_deploy.run_infra(db, ssh, component=getattr(args, "component", None),
+                                         operation=op)
+            return
+
+        # ── все прочие ветки требуют папку проекта ──
+        project_dir = (args.project if args and args.project
+                       else await _ask("Папка проекта", os.getcwd()))
+        project_dir = os.path.abspath(os.path.expanduser(project_dir))
+        if not os.path.isdir(os.path.join(project_dir, "systemd")):
+            print(f"⚠️  В {project_dir} нет папки systemd/ — продолжаю, но юниты ставить нечего.")
+        local = local_version(project_dir)
+        print(f"Проект: {project_dir}\nВерсия: {local.short} ({local.branch})"
+              f"{'  ⚠️ DIRTY (незакоммичено)' if local.dirty else ''}"
+              f"{'  [DRY-RUN]' if dry_run else ''}")
         if action == "create":   # служебное: создать записи programdata для юнитов проекта
             from core.programdata import create_record_interactive
             local = validate_mod.list_local_services(project_dir)

@@ -2,6 +2,46 @@
 
 Все значимые изменения DeployManager. Формат — по разделам Added / Changed / Fixed.
 
+## 2026-07-01
+
+### Added
+- **Деплой control-plane компонентов диспетчера (GD / WD / CD / DispatcherCtl)** —
+  `core/infra_deploy.py`, В ОБХОД `programdata`/`service_status` (это инфраструктура, не
+  бот-программы). Декларативный реестр `INFRA_COMPONENTS` (локальный путь, remote, юниты,
+  набор нод, common, .env-маппинг). **Guard**: cluster-only компоненты (GD/CD/DispatcherCtl)
+  ставятся ТОЛЬКО на `vocabulary.nodes.claster=true`; WD — на все online.
+- **CLI**: `--action infra --component {GD,WD,CD,DispatcherCtl}` (+ `--check` / `--dry-run`);
+  интерактивный пункт меню `[5]`.
+- **GUI**: ряд кнопок control-plane (indigo, отдельный цвет) — по нажатию выпадает меню
+  действий (как у обычных программ), папку проекта выбирать не нужно.
+- **Меню операций компонента** (паритет со стандартными ветками): Деплой с нуля / Добавить
+  ноду (только ноды без компонента) / Sync .env+юниты / Перезапуск / Сверка версий /
+  Управление (start·stop·restart) / Предпросмотр (dry-run) / Деинсталляция.
+- **Рендер `.env` из БД**: единый секрет-блок компонента — gitignored `env/<KEY>.env`
+  (шаблоны `env/*.env.example`); DeployManager рендерит финальный `.env` на ноду =
+  база + идентичность из `vocabulary.nodes` (`*_NODE_ID→id`, `WATCHDOG_NODE_IP→ip_address`,
+  `*_NODE_NAME`/`GD_NODE_HOSTNAME→server_name`), `chmod 600`. Нет базы → `.env` не пишется
+  (прод сохраняется). CD/DispatcherCtl — `.env` полностью единый (идентичность не нужна).
+- **common разделяемо**: rsync → `/opt/common` + `pip install -e` в venv компонента (deps из
+  `common/setup.py install_requires`; импорт `common` — через `PYTHONPATH=/opt` в юнитах).
+- **Сверка версий** для инфры (`core/status`, programdata не нужна) — тот же readout
+  `up-to-date / stale / missing / unreachable`, всегда как pre-flight перед деплоем.
+
+### Changed
+- `deployer.rsync_project(..., extra_excludes=[".env"])` — при инфра-деплое прод-`.env` на
+  ноде НЕ затирается (рендерится отдельно из базы+БД).
+- `db.get_online_nodes` теперь отдаёт колонку `claster` (для guard; доступ по имени —
+  остальным веткам безвредно).
+- `cli.run` — выбор режима вынесен ДО запроса папки проекта (инфра-ветка проект не требует).
+
+### Note
+- Реальный деплой требует полного коммита `Dispatcher2.0` (VERSION = git SHA; иначе DIRTY —
+  на ноды поедет незакоммиченный код).
+- **Reporter** пока не включён (владелец postgres:patroni_group, запуск через Patroni
+  `leader_callback.sh`, не systemd — ломает модель; добавить отдельным путём).
+- Форум-темы новых нод WD заводит сам на старте (`common/forum.py`, если `tg_topic_*_id`
+  NULL) — ручного шага в деплое нет.
+
 ## 2026-06-26
 
 ### Changed
