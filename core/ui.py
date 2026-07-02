@@ -121,14 +121,18 @@ async def combobox(title: str, labels: list[str], default_index: int = 0) -> int
 
 
 async def select(title: str, labels: list[str], default_index: int = 0,
-                 details: "list[str] | None" = None) -> int | None:
+                 details: "list[str] | None" = None,
+                 colors: "list[str] | None" = None,
+                 cancel_in_grid: bool = False) -> int | None:
     """Одиночный выбор из списка → индекс (0-based) или None (отмена).
-    details (по одному на label) — описания: GUI рисует сеткой с подписью+тултипом.
-    GUI-бэкенд → диалог; TTY → questionary.select; без TTY → ввод номера."""
+    details (по одному на label) — описания (GUI → тултип). colors — цвет кнопки
+    (green/blue/red/teal). cancel_in_grid — «Отмена» кнопкой в сетке. CLI игнорит
+    colors/cancel_in_grid. GUI-бэкенд → диалог; TTY → questionary; без TTY → номер."""
     if not labels:
         return None
     if _BACKEND is not None:
-        return await _BACKEND.select(title, labels, default_index, details)
+        return await _BACKEND.select(title, labels, default_index, details,
+                                     colors, cancel_in_grid)
     if not INTERACTIVE:
         return default_index
     if _has_tty():

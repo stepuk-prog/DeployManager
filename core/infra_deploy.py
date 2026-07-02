@@ -119,7 +119,7 @@ _OP_LABELS = (
     "🔄 Перезапуск службы",
     "🔍 Сверка версий",
     "🎛️ Управление службой",
-    "👀 Предпросмотр (dry-run)",
+    "👀 Предпросмотр",
     "🗑️ Деинсталляция",
 )
 _OP_DETAILS = {
@@ -132,6 +132,16 @@ _OP_DETAILS = {
     "dry-run": "rsync --dry-run — что изменилось бы, без изменений",
     "uninstall": "stop+disable + удалить юниты и папку компонента",
 }
+_OP_LABEL = dict(zip(_OPERATIONS, _OP_LABELS))
+
+# Порядок и цвет кнопок в GUI-сетке (3×3; «Отмена» — 9-я, красная, в самой сетке):
+#   ряд 1 зелёный: с нуля / добавить / сверка;  ряд 2 синий: перезапуск / sync / управление;
+#   ряд 3: деинсталляция (красный) / предпросмотр (бирюзовый) / отмена (красный).
+_MENU_ORDER = (
+    ("new", "green"), ("add", "green"), ("check", "green"),
+    ("restart", "blue"), ("sync-env", "blue"), ("manage", "blue"),
+    ("uninstall", "red"), ("dry-run", "teal"),
+)
 
 
 def _node_name(node) -> str:
@@ -329,25 +339,32 @@ async def run_infra(db: Database, ssh: SshClient, *, component: str | None = Non
         comp = INFRA_COMPONENTS[component]
     else:
         keys = list(INFRA_COMPONENTS)
-        labels = [
-            f"{INFRA_COMPONENTS[k].label} → {INFRA_COMPONENTS[k].remote_folder} "
-            f"[{'все ноды' if INFRA_COMPONENTS[k].nodes == 'all' else 'кластер'}]"
+        labels = [INFRA_COMPONENTS[k].label for k in keys]
+        details = [
+            f"→ {INFRA_COMPONENTS[k].remote_folder}  "
+            f"[{'все ноды' if INFRA_COMPONENTS[k].nodes == 'all' else 'только кластер'}]"
             for k in keys
         ]
-        idx = await ui.select("Инфра-компонент:", labels)
+        idx = await ui.select("Выберите инфра-компонент "
+                              "(подробности — во всплывающей подсказке кнопки):",
+                              labels, details=details)
         if idx is None:
             return
         comp = INFRA_COMPONENTS[keys[idx]]
 
-    # 2) операция (выпадающее меню — как ветки обычных программ)
+    # 2) операция — цветная сетка 3×3 (порядок/цвета в _MENU_ORDER, «Отмена» в сетке)
     if operation is None:
+        menu_ops = [op for op, _ in _MENU_ORDER]
         idx = await ui.select(
-            f"С помощью кнопок выберите действие для работы с {comp.label}. "
+            f"С помощью кнопок выберите действие для работы с ***{comp.label}***. "
             f"Подробности операции — во всплывающей подсказке кнопки.",
-            list(_OP_LABELS), details=[_OP_DETAILS[op] for op in _OPERATIONS])
+            [_OP_LABEL[op] for op in menu_ops],
+            details=[_OP_DETAILS[op] for op in menu_ops],
+            colors=[clr for _, clr in _MENU_ORDER],
+            cancel_in_grid=True)
         if idx is None:
             return
-        operation = _OPERATIONS[idx]
+        operation = menu_ops[idx]
     if operation not in _OPERATIONS:
         print(f"🛑 Неизвестное действие: {operation!r}")
         return

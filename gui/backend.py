@@ -21,6 +21,18 @@ def _no_button(text: str, on_click) -> ft.Button:
                      bgcolor=ft.Colors.RED_200, on_click=on_click)
 
 
+def _rich(text: str, size: int) -> ft.Text:
+    """Текст заданного размера; фрагменты в ***…*** — жирным курсивом (для имени компонента)."""
+    spans = []
+    for i, part in enumerate(text.split("***")):
+        if not part:
+            continue
+        style = (ft.TextStyle(size=size, weight=ft.FontWeight.BOLD, italic=True)
+                 if i % 2 else ft.TextStyle(size=size))
+        spans.append(ft.TextSpan(part, style=style))
+    return ft.Text(spans=spans)
+
+
 def _title_with_close(text: str, on_close) -> ft.Row:
     """Заголовок диалога с крестиком закрытия справа (всегда виден, даже у длинных окон)."""
     return ft.Row(
@@ -122,10 +134,14 @@ class FletUi:
         return await fut
 
     async def select(self, title: str, labels: list[str], default_index: int = 0,
-                     details: "list[str] | None" = None) -> int | None:
+                     details: "list[str] | None" = None,
+                     colors: "list[str] | None" = None,
+                     cancel_in_grid: bool = False) -> int | None:
         """Выбор одного варианта (→ индекс / None при отмене).
-        details задан → сетка компактных кнопок ~3-в-ряд с описанием под лейблом
-        (+ тултип); мало коротких вариантов → кнопки в ряд; иначе вертикальный список."""
+        details задан → цветная сетка компактных кнопок ~3-в-ряд (деталь — тултип);
+        colors — цвет фона каждой кнопки (green/blue/red/teal); cancel_in_grid —
+        «Отмена» красной кнопкой внутри сетки, а не в actions. Иначе — прежнее
+        поведение (кнопки в ряд / вертикальный список)."""
         fut = asyncio.get_running_loop().create_future()
 
         def choose(idx):
@@ -138,17 +154,29 @@ class FletUi:
         cancel = _no_button("✖️ Отмена", choose(None))
         header = _title_with_close("Выбор", choose(None))   # крестик всегда виден вверху
         compact = len(labels) <= 4 and all(len(lab) <= 24 for lab in labels)
-        if details:                                    # компактная сетка ~3-в-ряд; деталь — тултип
-            btns = [ft.Button(content=ft.Text(lab, size=13), on_click=choose(i),
-                              width=200, height=44,
-                              tooltip=(details[i] if i < len(details) else None))
+        if details:                                    # цветная сетка ~3-в-ряд; деталь — тултип
+            _CLR = {"green": ft.Colors.GREEN_700, "blue": ft.Colors.BLUE_700,
+                    "red": ft.Colors.RED_700, "teal": ft.Colors.TEAL_600}
+
+            def _btn(lab, on_click, color, tip=None):
+                return ft.Button(
+                    content=ft.Text(lab, size=13, color=ft.Colors.WHITE),
+                    bgcolor=_CLR.get(color), on_click=on_click,
+                    width=200, height=44, tooltip=tip)
+
+            btns = [_btn(lab, choose(i),
+                         colors[i] if colors and i < len(colors) else None,
+                         details[i] if i < len(details) else None)
                     for i, lab in enumerate(labels)]
+            if cancel_in_grid:
+                btns.append(_btn("✖ Отмена", choose(None), "red"))
             grid = ft.Row(btns, wrap=True, spacing=8, run_spacing=8, width=632)
-            content = ft.Column([ft.Text(title, size=13), grid],
-                                tight=True, spacing=12, width=650)
+            content = ft.Column([_rich(title, 24), grid],
+                                tight=True, spacing=16, width=650)
             dialog = ft.AlertDialog(
                 modal=True, title=header, content=content,
-                actions=[cancel], actions_alignment=ft.MainAxisAlignment.END)
+                actions=([] if cancel_in_grid else [cancel]),
+                actions_alignment=ft.MainAxisAlignment.END)
         elif compact:                                  # варианты — кнопками в ряд
             actions = [ft.Button(content=ft.Text(lab), on_click=choose(i))
                        for i, lab in enumerate(labels)]
