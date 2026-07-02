@@ -171,7 +171,7 @@ class FletUi:
             if cancel_in_grid:
                 btns.append(_btn("✖ Отмена", choose(None), "red"))
             grid = ft.Row(btns, wrap=True, spacing=8, run_spacing=8, width=632)
-            content = ft.Column([_rich(title, 24), grid],
+            content = ft.Column([_rich(title, 18), grid],
                                 tight=True, spacing=16, width=650)
             dialog = ft.AlertDialog(
                 modal=True, title=header, content=content,
