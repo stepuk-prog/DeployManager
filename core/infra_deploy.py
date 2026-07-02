@@ -42,7 +42,7 @@ from core.deploy import DeployResult, print_deploy_results
 from database.db import Database
 from settings import config
 
-COMMON_SUBDIR = "Dispatcher2.0/common"
+COMMON_SUBDIR = "common"
 COMMON_REMOTE = "/opt/common"
 ENV_BASE_DIR = os.path.join(config.ROOT, "env")   # gitignored: env/<KEY>.env
 
@@ -51,7 +51,7 @@ ENV_BASE_DIR = os.path.join(config.ROOT, "env")   # gitignored: env/<KEY>.env
 class InfraComponent:
     key: str
     label: str
-    project_subdir: str                    # относительно config.PROJECTS_DIR
+    project_subdir: str                    # относительно config.DISPATCHER_DIR (корень Dispatcher2.0)
     remote_folder: str                     # /opt/...
     units: tuple[tuple[str, str], ...]     # (unit_name, src_relpath_на_ноде)
     nodes: str                             # "all" | "cluster"
@@ -69,7 +69,7 @@ class InfraComponent:
 INFRA_COMPONENTS: dict[str, InfraComponent] = {
     "GD": InfraComponent(
         key="GD", label="GlobalDispatcher2",
-        project_subdir="Dispatcher2.0/GlobalDispatcher2",
+        project_subdir="GlobalDispatcher2",
         remote_folder="/opt/GlobalDispatcher2",
         units=(("dispatcher.service", "systemd/dispatcher.service"),
                ("gd-alert.service", "systemd/gd-alert.service")),
@@ -79,7 +79,7 @@ INFRA_COMPONENTS: dict[str, InfraComponent] = {
     ),
     "WD": InfraComponent(
         key="WD", label="Watchdog2",
-        project_subdir="Dispatcher2.0/Watchdog2",
+        project_subdir="Watchdog2",
         remote_folder="/opt/Watchdog2",
         units=(("watchdog.service", "systemd/watchdog.service"),
                ("watchdog-alert.service", "systemd/watchdog-alert.service")),
@@ -90,7 +90,7 @@ INFRA_COMPONENTS: dict[str, InfraComponent] = {
     ),
     "CD": InfraComponent(
         key="CD", label="CronDispatcher2",
-        project_subdir="Dispatcher2.0/CronDispatcher2",
+        project_subdir="CronDispatcher2",
         remote_folder="/opt/cron_disp2",
         units=(("cron-dispatcher.service", "systemd/cron-dispatcher.service"),
                ("cd-alert.service", "systemd/cd-alert.service")),
@@ -99,7 +99,7 @@ INFRA_COMPONENTS: dict[str, InfraComponent] = {
     ),
     "DispatcherCtl": InfraComponent(
         key="DispatcherCtl", label="DispatcherCtl (CLI-оператор)",
-        project_subdir="Dispatcher2.0/DispatcherCtl",
+        project_subdir="DispatcherCtl",
         remote_folder="/opt/DispatcherCtl",
         units=(),
         nodes="cluster",
@@ -401,8 +401,8 @@ async def run_infra(db: Database, ssh: SshClient, *, component: str | None = Non
         return
 
     # 5) ветки, работающие с локальным кодом
-    project_dir = os.path.join(config.PROJECTS_DIR, comp.project_subdir)
-    common_dir = os.path.join(config.PROJECTS_DIR, COMMON_SUBDIR)
+    project_dir = os.path.join(config.DISPATCHER_DIR, comp.project_subdir)
+    common_dir = os.path.join(config.DISPATCHER_DIR, COMMON_SUBDIR)
     if not os.path.isdir(project_dir):
         print(f"🛑 Нет каталога проекта: {project_dir}")
         return

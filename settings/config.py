@@ -65,6 +65,14 @@ VERSION_FILE = "VERSION"
 # Стартовая папка для диалога «Обзор…» в GUI (где лежат проекты).
 PROJECTS_DIR = str(Path(os.getenv("PROJECTS_DIR", "~/PythonProjects")).expanduser())
 
+# Корень репозитория Dispatcher2.0 (control-plane: GD/WD/CD/DispatcherCtl + common).
+# Отдельный от PROJECTS_DIR ключ — чтобы DM настраивался на ЛЮБОЙ машине, где
+# Dispatcher2.0 лежит не под ~/PythonProjects или под другим именем. По умолчанию —
+# PROJECTS_DIR/Dispatcher2.0 (обратная совместимость, ключ можно не задавать).
+DISPATCHER_DIR = str(Path(
+    os.getenv("DISPATCHER_DIR", os.path.join(PROJECTS_DIR, "Dispatcher2.0"))
+).expanduser())
+
 # ----- Provisioning на ноде (последовательность из README/DEPLOY, перенесённая в код) -----
 # venv → pip install -U pip → pip install -r requirements.txt → playwright install firefox
 PROVISION = os.getenv("PROVISION", "1").strip().lower() in ("1", "true", "yes", "on")

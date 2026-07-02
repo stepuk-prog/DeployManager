@@ -10,7 +10,7 @@ GitHub: `git@github.com-stepuk:stepuk-prog/DeployManager.git` (alias `github.com
 - GUI: `.venv/bin/python gui_main.py` (Flet). CLI: `.venv/bin/python main.py [--action …]`.
 - CLI-флаги: `--project PATH --action {new,add,check,create,state,manage,uninstall} --command {start,stop,restart} --nodes all|... --dry-run --yes`.
 - Тесты: `PYTHONPATH=. .venv/bin/python -m pytest tests/ -q` (чистая логика, без БД/SSH).
-- `.env` (gitignored) — креды БД Program + SSH. Ключи: `PG_*`, `SSH_USER=vova`, `SSH_KEY=/home/vlad/.ssh/id_rsa`, `PRIV_USER=root`, `PROJECTS_DIR`, `RSYNC_DELETE`, `PLAYWRIGHT_BROWSER`, `PROVISION`.
+- `.env` (gitignored) — креды БД Program + SSH. Ключи: `PG_*`, `SSH_USER=vova`, `SSH_KEY=/home/vlad/.ssh/id_rsa`, `PRIV_USER=root`, `PROJECTS_DIR`, `DISPATCHER_DIR` (корень Dispatcher2.0 для деплоя control-plane; дефолт `PROJECTS_DIR/Dispatcher2.0`), `RSYNC_DELETE`, `PLAYWRIGHT_BROWSER`, `PROVISION`.
 - venv в проекте — **`.venv`** (на серверах у проектов — `venv`, см. `config.VENV_DIR`).
 
 ## Архитектура (ядро UI-агностично)
