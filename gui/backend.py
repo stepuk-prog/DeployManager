@@ -27,7 +27,7 @@ def _rich(text: str, size: int) -> ft.Text:
     for i, part in enumerate(text.split("***")):
         if not part:
             continue
-        style = (ft.TextStyle(size=size, weight=ft.FontWeight.BOLD, italic=True)
+        style = (ft.TextStyle(size=size, weight=ft.FontWeight.BOLD)
                  if i % 2 else ft.TextStyle(size=size))
         spans.append(ft.TextSpan(part, style=style))
     return ft.Text(spans=spans)
