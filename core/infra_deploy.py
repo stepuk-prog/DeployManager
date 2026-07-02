@@ -109,17 +109,29 @@ INFRA_COMPONENTS: dict[str, InfraComponent] = {
 }
 
 # Операции меню (паритет со стандартными ветками DeployManager).
+# Лейблы — КОРОТКИЕ (кнопка); подробности — в _OP_DETAILS (печатаются после выбора
+# и в диалоге подтверждения), не засоряют меню.
 _OPERATIONS = ("new", "add", "sync-env", "restart", "check", "manage", "dry-run", "uninstall")
 _OP_LABELS = (
-    "🚀 Деплой с нуля (код+common+venv+юниты+.env+restart) — на ВСЕ целевые ноды",
-    "➕ Добавить ноду (то же, только на ноды без компонента)",
-    "♻️ Sync .env + юниты (пере-рендер .env из базы+БД + обновить юниты + restart, без rsync кода)",
-    "🔄 Перезапустить службу (systemctl restart на всех целевых нодах)",
-    "🔍 Сверка версий на нодах (VERSION-манифест vs локальный git)",
-    "🎛️ Управление службой (start / stop / restart)",
-    "👀 Предпросмотр (dry-run rsync — что изменилось бы, без изменений)",
-    "🗑️ Деинсталляция (stop+disable+удалить юниты и папку)",
+    "🚀 Деплой с нуля",
+    "➕ Добавить ноду",
+    "♻️ Sync .env + юниты",
+    "🔄 Перезапуск службы",
+    "🔍 Сверка версий",
+    "🎛️ Управление службой",
+    "👀 Предпросмотр (dry-run)",
+    "🗑️ Деинсталляция",
 )
+_OP_DETAILS = {
+    "new": "код+common+venv+юниты+.env+restart — на ВСЕ целевые ноды",
+    "add": "то же, что «с нуля», но только на ноды без компонента",
+    "sync-env": "пере-рендер .env из базы+БД + обновить юниты + restart (без rsync кода)",
+    "restart": "systemctl restart на всех целевых нодах",
+    "check": "VERSION-манифест на нодах vs локальный git (read-only)",
+    "manage": "start / stop / restart службы",
+    "dry-run": "rsync --dry-run — что изменилось бы, без изменений",
+    "uninstall": "stop+disable + удалить юниты и папку компонента",
+}
 
 
 def _node_name(node) -> str:
@@ -348,6 +360,7 @@ async def run_infra(db: Database, ssh: SshClient, *, component: str | None = Non
              "dry-run": "Предпросмотр", "uninstall": "Деинсталляция"}[operation]
     print(f"\n🌐 {_verb}: {comp.label}  "
           f"[ноды: {'все online' if comp.nodes == 'all' else 'только кластер (claster=true)'}]")
+    print(f"   → {_OP_DETAILS[operation]}")
     if skipped:
         print(f"   ⏭️  пропускаю не-кластерные ({len(skipped)}): "
               + ", ".join(_node_name(n) for n in skipped))
@@ -409,7 +422,9 @@ async def run_infra(db: Database, ssh: SshClient, *, component: str | None = Non
         if comp.restart and comp.units:
             bits.append("restart")
         note = (" (+ " + ", ".join(bits) + ")") if bits else ""
-        if not await ui.confirm(f"{_verb} {comp.label} на {len(targets)} нод(ы){note}?", danger=True):
+        if not await ui.confirm(
+                f"{_verb} {comp.label} на {len(targets)} нод(ы){note}?\n"
+                f"   {_OP_DETAILS[operation]}", danger=True):
             print("Отменено.")
             return
 
