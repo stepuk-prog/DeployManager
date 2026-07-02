@@ -280,6 +280,29 @@ async def _deploy_one(ssh: SshClient, deployer: Deployer, comp: InfraComponent,
     return DeployResult(name, ip, True, "done")
 
 
+async def _apply_to_nodes(ssh: SshClient, comp: InfraComponent, project_dir: str,
+                          common_dir: str, targets: list, local, *,
+                          rsync_code: bool, write_env: bool, dry_run: bool) -> None:
+    """Раскатать компонент на targets + напечатать результаты. Общий движок для
+    деплой-веток и для обновления отставших нод из «Сверка версий»."""
+    manifest_json = build_manifest(local, getpass.getuser(),
+                                   datetime.now().isoformat(timespec="seconds"))
+    deployer = Deployer(ssh)
+    verb = "Предпросмотр" if dry_run else "Применяю"
+    ui.progress(f"{verb}: 0/{len(targets)} нод…")
+    done = {"n": 0}
+
+    async def _one(n):
+        r = await _deploy_one(ssh, deployer, comp, project_dir, common_dir, n,
+                              manifest_json, rsync_code=rsync_code,
+                              write_env=write_env, dry_run=dry_run)
+        done["n"] += 1
+        ui.progress(f"{verb}: {done['n']}/{len(targets)} нод…")
+        return r
+
+    print_deploy_results(list(await asyncio.gather(*[_one(n) for n in targets])))
+
+
 # ── управление / деинсталляция (отдельные ветки) ──
 
 async def _run_manage(ssh: SshClient, comp: InfraComponent, targets: list,
@@ -416,6 +439,22 @@ async def run_infra(db: Database, ssh: SshClient, *, component: str | None = Non
     statuses = await status.check_status(ssh, targets, comp.remote_folder, local)
     status.print_status(local, statuses)
     if operation == "check":
+        # read-only сверка → но если есть отставшие (stale) / отсутствующие (missing) —
+        # сразу предлагаем раскатать на них новую версию (rsync кода + рестарт, без .env),
+        # иначе «Сверка» упиралась в тупик: разницу видит, обновить не предлагает.
+        outdated_names = {s.node for s in statuses if s.state in ("stale", "missing")}
+        outdated = [n for n in targets if _node_name(n) in outdated_names]
+        if not outdated:
+            print("✅ Все ноды up-to-date.")
+            return
+        if not await ui.confirm(
+                f"Обновить {len(outdated)} отставших нод до v{local.short} — "
+                f"rsync кода + рестарт (без .env)?\n   "
+                + ", ".join(_node_name(n) for n in outdated), danger=True):
+            print("Отменено.")
+            return
+        await _apply_to_nodes(ssh, comp, project_dir, common_dir, outdated, local,
+                              rsync_code=True, write_env=False, dry_run=False)
         return
 
     dry_run = operation == "dry-run"
@@ -448,21 +487,8 @@ async def run_infra(db: Database, ssh: SshClient, *, component: str | None = Non
             print("Отменено.")
             return
 
-    manifest_json = build_manifest(local, getpass.getuser(),
-                                   datetime.now().isoformat(timespec="seconds"))
-    deployer = Deployer(ssh)
-    verb = "Предпросмотр" if dry_run else "Применяю"
-    ui.progress(f"{verb}: 0/{len(targets)} нод…")
-    done = {"n": 0}
-
-    async def _one(n):
-        r = await _deploy_one(ssh, deployer, comp, project_dir, common_dir, n, manifest_json,
-                              rsync_code=rsync_code, write_env=write_env, dry_run=dry_run)
-        done["n"] += 1
-        ui.progress(f"{verb}: {done['n']}/{len(targets)} нод…")
-        return r
-
-    print_deploy_results(list(await asyncio.gather(*[_one(n) for n in targets])))
+    await _apply_to_nodes(ssh, comp, project_dir, common_dir, targets, local,
+                          rsync_code=rsync_code, write_env=write_env, dry_run=dry_run)
 
 
 __all__ = ["INFRA_COMPONENTS", "InfraComponent", "run_infra"]
