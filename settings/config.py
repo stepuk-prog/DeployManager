@@ -48,7 +48,7 @@ SYSTEMD_DIR = "/etc/systemd/system"
 #   files/*    — прочий рантайм files/ (кроме .gitkeep — он в RSYNC_INCLUDES, чтобы папка создалась).
 RSYNC_EXCLUDES = [
     ".git", ".git.backup", ".venv", "venv", "*.log", "*.session", "files/*",
-    "__pycache__", "*.pyc", ".idea", "pictures/new",
+    "__pycache__", "*.pyc", "*.egg-info", ".idea", "pictures/new",
     "*.md", ".env.example",
     ".claude", ".directory", ".vscode",     # dev-артефакты редакторов/инструментов — не деплоим
 ]
