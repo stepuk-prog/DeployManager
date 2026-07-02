@@ -65,7 +65,7 @@ class InfraComponent:
 
 
 # src_relpath юнита — путь ВНУТРИ remote_folder после rsync (структура сохраняется):
-# у GD/WD юниты в systemd/, у CD — в корне репо. DispatcherCtl — CLI без службы.
+# юниты у всех компонентов в systemd/ (GD/WD/CD). DispatcherCtl — CLI без службы.
 INFRA_COMPONENTS: dict[str, InfraComponent] = {
     "GD": InfraComponent(
         key="GD", label="GlobalDispatcher2",
@@ -92,8 +92,8 @@ INFRA_COMPONENTS: dict[str, InfraComponent] = {
         key="CD", label="CronDispatcher2",
         project_subdir="Dispatcher2.0/CronDispatcher2",
         remote_folder="/opt/cron_disp2",
-        units=(("cron-dispatcher.service", "cron-dispatcher.service"),
-               ("cd-alert.service", "cd-alert.service")),
+        units=(("cron-dispatcher.service", "systemd/cron-dispatcher.service"),
+               ("cd-alert.service", "systemd/cd-alert.service")),
         nodes="cluster",
         node_env={},
     ),
