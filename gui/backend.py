@@ -121,9 +121,11 @@ class FletUi:
             modal=True, title=title, content=content, actions=[yes, no]))
         return await fut
 
-    async def select(self, title: str, labels: list[str], default_index: int = 0) -> int | None:
-        """Выбор одного варианта (→ индекс / None при отмене). Мало коротких вариантов —
-        кнопки в ряд; много/длинные — прокручиваемый вертикальный список."""
+    async def select(self, title: str, labels: list[str], default_index: int = 0,
+                     details: "list[str] | None" = None) -> int | None:
+        """Выбор одного варианта (→ индекс / None при отмене).
+        details задан → сетка компактных кнопок ~3-в-ряд с описанием под лейблом
+        (+ тултип); мало коротких вариантов → кнопки в ряд; иначе вертикальный список."""
         fut = asyncio.get_running_loop().create_future()
 
         def choose(idx):
@@ -136,7 +138,26 @@ class FletUi:
         cancel = _no_button("✖️ Отмена", choose(None))
         header = _title_with_close("Выбор", choose(None))   # крестик всегда виден вверху
         compact = len(labels) <= 4 and all(len(lab) <= 24 for lab in labels)
-        if compact:                                    # варианты — кнопками в ряд
+        if details:                                    # сетка ~3-в-ряд + описание
+            def _opt(i, lab):
+                d = details[i] if i < len(details) else ""
+                return ft.Button(
+                    content=ft.Column(
+                        [ft.Text(lab, size=13, weight=ft.FontWeight.BOLD),
+                         ft.Text(d, size=10, color=ft.Colors.ON_SURFACE_VARIANT,
+                                 max_lines=3, text_align=ft.TextAlign.CENTER)],
+                        spacing=3, tight=True,
+                        horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                    on_click=choose(i), width=212, height=82, tooltip=d)
+            grid = ft.Row([_opt(i, lab) for i, lab in enumerate(labels)],
+                          wrap=True, spacing=8, run_spacing=8, width=680)
+            content = ft.Column([ft.Text(title, weight=ft.FontWeight.BOLD), grid],
+                                tight=True, spacing=12, width=700,
+                                scroll=ft.ScrollMode.AUTO)
+            dialog = ft.AlertDialog(
+                modal=True, title=header, content=content,
+                actions=[cancel], actions_alignment=ft.MainAxisAlignment.END)
+        elif compact:                                  # варианты — кнопками в ряд
             actions = [ft.Button(content=ft.Text(lab), on_click=choose(i))
                        for i, lab in enumerate(labels)]
             actions.append(cancel)

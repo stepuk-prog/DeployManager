@@ -120,13 +120,15 @@ async def combobox(title: str, labels: list[str], default_index: int = 0) -> int
     return await select(title, labels, default_index)
 
 
-async def select(title: str, labels: list[str], default_index: int = 0) -> int | None:
+async def select(title: str, labels: list[str], default_index: int = 0,
+                 details: "list[str] | None" = None) -> int | None:
     """Одиночный выбор из списка → индекс (0-based) или None (отмена).
+    details (по одному на label) — описания: GUI рисует сеткой с подписью+тултипом.
     GUI-бэкенд → диалог; TTY → questionary.select; без TTY → ввод номера."""
     if not labels:
         return None
     if _BACKEND is not None:
-        return await _BACKEND.select(title, labels, default_index)
+        return await _BACKEND.select(title, labels, default_index, details)
     if not INTERACTIVE:
         return default_index
     if _has_tty():

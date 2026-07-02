@@ -341,7 +341,8 @@ async def run_infra(db: Database, ssh: SshClient, *, component: str | None = Non
 
     # 2) операция (выпадающее меню — как ветки обычных программ)
     if operation is None:
-        idx = await ui.select(f"{comp.label}: действие?", list(_OP_LABELS))
+        idx = await ui.select(f"{comp.label}: действие?", list(_OP_LABELS),
+                              details=[_OP_DETAILS[op] for op in _OPERATIONS])
         if idx is None:
             return
         operation = _OPERATIONS[idx]
