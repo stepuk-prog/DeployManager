@@ -138,22 +138,14 @@ class FletUi:
         cancel = _no_button("✖️ Отмена", choose(None))
         header = _title_with_close("Выбор", choose(None))   # крестик всегда виден вверху
         compact = len(labels) <= 4 and all(len(lab) <= 24 for lab in labels)
-        if details:                                    # сетка ~3-в-ряд + описание
-            def _opt(i, lab):
-                d = details[i] if i < len(details) else ""
-                return ft.Button(
-                    content=ft.Column(
-                        [ft.Text(lab, size=13, weight=ft.FontWeight.BOLD),
-                         ft.Text(d, size=10, color=ft.Colors.ON_SURFACE_VARIANT,
-                                 max_lines=3, text_align=ft.TextAlign.CENTER)],
-                        spacing=3, tight=True,
-                        horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-                    on_click=choose(i), width=212, height=82, tooltip=d)
-            grid = ft.Row([_opt(i, lab) for i, lab in enumerate(labels)],
-                          wrap=True, spacing=8, run_spacing=8, width=680)
-            content = ft.Column([ft.Text(title, weight=ft.FontWeight.BOLD), grid],
-                                tight=True, spacing=12, width=700,
-                                scroll=ft.ScrollMode.AUTO)
+        if details:                                    # компактная сетка ~3-в-ряд; деталь — тултип
+            btns = [ft.Button(content=ft.Text(lab, size=13), on_click=choose(i),
+                              width=200, height=44,
+                              tooltip=(details[i] if i < len(details) else None))
+                    for i, lab in enumerate(labels)]
+            grid = ft.Row(btns, wrap=True, spacing=8, run_spacing=8, width=632)
+            content = ft.Column([ft.Text(title, size=13), grid],
+                                tight=True, spacing=12, width=650)
             dialog = ft.AlertDialog(
                 modal=True, title=header, content=content,
                 actions=[cancel], actions_alignment=ft.MainAxisAlignment.END)
