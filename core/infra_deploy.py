@@ -91,7 +91,7 @@ INFRA_COMPONENTS: dict[str, InfraComponent] = {
     "CD": InfraComponent(
         key="CD", label="CronDispatcher2",
         project_subdir="CronDispatcher2",
-        remote_folder="/opt/cron_disp2",
+        remote_folder="/opt/CronDispatcher2",
         units=(("cron-dispatcher.service", "systemd/cron-dispatcher.service"),
                ("cd-alert.service", "systemd/cd-alert.service")),
         nodes="cluster",
