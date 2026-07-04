@@ -8,6 +8,3 @@ __pycache__/
 *.log
 logs/deploy_audit.log
 
-# базы .env инфра-компонентов (секреты) — рендерятся на ноды; шаблоны храним
-env/*.env
-!env/*.env.example

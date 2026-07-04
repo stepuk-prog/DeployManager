@@ -44,7 +44,6 @@ from settings import config
 
 COMMON_SUBDIR = "common"
 COMMON_REMOTE = "/opt/common"
-ENV_BASE_DIR = os.path.join(config.ROOT, "env")   # gitignored: env/<KEY>.env
 
 
 @dataclass(frozen=True)
@@ -61,7 +60,10 @@ class InfraComponent:
 
     @property
     def env_base(self) -> str:
-        return os.path.join(ENV_BASE_DIR, f"{self.key}.env")
+        # Деплой-база живёт В САМОМ ПРОЕКТЕ рядом с .env.example (Dispatcher
+        # самодостаточен: код+шаблоны+секрет-база в одном репо), DM только ЧИТАЕТ:
+        # <DISPATCHER_DIR>/<project_subdir>/.env.deploy (gitignored).
+        return os.path.join(config.DISPATCHER_DIR, self.project_subdir, ".env.deploy")
 
 
 # src_relpath юнита — путь ВНУТРИ remote_folder после rsync (структура сохраняется):
