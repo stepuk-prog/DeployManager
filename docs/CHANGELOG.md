@@ -2,6 +2,18 @@
 
 Все значимые изменения DeployManager. Формат — по разделам Added / Changed / Fixed.
 
+## 2026-07-05 (2)
+
+### Changed
+- **Сверка версий инфра-компонентов (GD/WD/CD/DispatcherCtl) — паритет со стандартной веткой:**
+  `core/status.py` теперь показывает **счётчик отставания** (колонка «ОТСТАВАНИЕ»:
+  `отстаёт на N` / `впереди на N` / `разошлись (−b/+a)` / `вне истории репозитория`), как
+  дашборд «Проверить версии». `check_status(..., project_dir)` считает лаг по git-истории.
+- **Единый расчёт отставания** — `classes/manifest.py:lag_text(project_dir, node_commit,
+  local_commit)`; `core/dashboard.py` больше не держит свою копию (`_lag`/`_count` удалены,
+  импорт из manifest) — дашборд и инфра-сверка считают одинаково.
+- Вызовы `status.check_status` передают `project_dir` (`core/infra_deploy.py`, `cli.py`).
+
 ## 2026-07-05
 
 ### Added

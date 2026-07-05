@@ -513,7 +513,8 @@ async def _deploy_flow(db: Database, ssh: SshClient, project_dir: str, local,
         await _report_units(ssh, targets, results, service_files)
         await _bind_and_report(db, records, targets, results)
         await _verify_nodes(ssh, targets, results, remote_folder, project_dir)
-        status_mod.print_status(local, await status_mod.check_status(ssh, targets, remote_folder, local))
+        status_mod.print_status(
+            local, await status_mod.check_status(ssh, targets, remote_folder, local, project_dir))
         await _journal_deploy(db, records, targets, results, local, "add_server" if add_server else "deploy")
 
     await _install_units_light(db, ssh, project_dir, remote_folder, light_targets, local, dry_run=False)

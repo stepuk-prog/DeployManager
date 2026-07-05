@@ -438,7 +438,7 @@ async def run_infra(db: Database, ssh: SshClient, *, component: str | None = Non
     print(f"   версия: v{local.short} ({local.branch}){'  ⚠️ DIRTY' if local.dirty else ''}")
 
     # сверка версий на нодах (VERSION vs git) — programdata не нужна
-    statuses = await status.check_status(ssh, targets, comp.remote_folder, local)
+    statuses = await status.check_status(ssh, targets, comp.remote_folder, local, project_dir)
     status.print_status(local, statuses)
     if operation == "check":
         # read-only сверка → но если есть отставшие (stale) / отсутствующие (missing) —

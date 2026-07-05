@@ -59,3 +59,32 @@ def parse_manifest(text: str | None) -> dict | None:
         return json.loads(text)
     except (ValueError, TypeError):
         return None
+
+
+def _rev_count(project_dir: str, rng: str) -> int | None:
+    """git rev-list --count <rng> → число или None (коммит не в истории / сбой git)."""
+    try:
+        out = _git(project_dir, "rev-list", "--count", rng)
+    except RuntimeError:
+        return None
+    return int(out) if out.isdigit() else None
+
+
+def lag_text(project_dir: str, node_commit: str, local_commit: str) -> str:
+    """Текст отставания ноды относительно локальной версии (по git-истории проекта):
+    «up-to-date» / «отстаёт на N» / «впереди на N» / «разошлись (−b/+a)» /
+    «вне истории репозитория» / «версия неизвестна». Единый источник для дашборда и
+    сверки версий (в т.ч. инфра-компонентов) — чтобы вывод был одинаковым."""
+    if not node_commit:
+        return "версия неизвестна"
+    if node_commit == local_commit:
+        return "up-to-date"
+    behind = _rev_count(project_dir, f"{node_commit}..{local_commit}")
+    ahead = _rev_count(project_dir, f"{local_commit}..{node_commit}")
+    if behind is None or ahead is None:
+        return "вне истории репозитория"
+    if behind and not ahead:
+        return f"отстаёт на {behind}"
+    if ahead and not behind:
+        return f"впереди на {ahead}"
+    return f"разошлись (−{behind}/+{ahead})"

@@ -5,9 +5,8 @@
 git rev-list между SHA ноды и локальным (если оба в истории проекта).
 """
 import asyncio
-import subprocess
 
-from classes.manifest import parse_manifest
+from classes.manifest import lag_text as _lag, parse_manifest
 from classes.ssh_client import SshClient
 from core import ui
 from core.validate import list_local_services
@@ -16,30 +15,6 @@ from logs import get_logger
 from settings import config
 
 logger = get_logger(__name__)
-
-
-def _count(project_dir: str, rng: str) -> int | None:
-    r = subprocess.run(["git", "-C", project_dir, "rev-list", "--count", rng],
-                       capture_output=True, text=True, timeout=15)
-    s = r.stdout.strip()
-    return int(s) if r.returncode == 0 and s.isdigit() else None
-
-
-def _lag(project_dir: str, node_commit: str, local_commit: str) -> str:
-    """Текст отставания ноды относительно локальной версии."""
-    if not node_commit:
-        return "версия неизвестна"
-    if node_commit == local_commit:
-        return "up-to-date"
-    behind = _count(project_dir, f"{node_commit}..{local_commit}")
-    ahead = _count(project_dir, f"{local_commit}..{node_commit}")
-    if behind is None or ahead is None:
-        return "вне истории репозитория"
-    if behind and not ahead:
-        return f"отстаёт на {behind}"
-    if ahead and not behind:
-        return f"впереди на {ahead}"
-    return f"разошлись (−{behind}/+{ahead})"
 
 
 async def show(ssh: SshClient, db: Database, project_dir: str, local) -> list[dict]:
