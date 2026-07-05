@@ -64,19 +64,45 @@ async def check_state(ssh: SshClient, db: Database, project_dir: str) -> None:
     for rec in records:
         unit = rec["service_name"]
         bindings = await db.get_service_bindings(rec["program_id"])
-        print(f"\n▸ {unit}")
         if not bindings:
-            print("    — нет привязок")
+            print(f"  {unit}   — нет привязок")
             continue
         states = await asyncio.gather(*[_unit_state(ssh, b["ip_address"], unit) for b in bindings])
-        for b, st in zip(bindings, states):
-            ip = b["ip_address"]
-            node = b["server_name"] or ip
-            if st is None:
-                print(f"    {node:16} 🔌 недоступна — пропускаю (БД не трогаю)")
-                continue
-            await db.update_service_state(rec["program_id"], b["node_id"], st.running, st.error)
-            icon = "▶ active" if st.running else (f"✗ {st.active}" if st.active else "■ inactive")
-            tail = f"  ошибка: {st.error}" if st.error else ""
-            print(f"    {node:16} {b['status']:11} {icon}{tail}")
+        for b, st in zip(bindings, states):            # снимок состояния в БД (кроме недоступных нод)
+            if st is not None:
+                await db.update_service_state(rec["program_id"], b["node_id"], st.running, st.error)
+        print(f"  {unit}   {_summarize(bindings, states)}")
     ui.progress("")
+
+
+def _summarize(bindings: list, states: list) -> str:
+    """Одна строка на сервис: кто leader + агрегат состояния; поимённо — только отклонения
+    (active/failed/offline). Однородная масса сворачивается в «все остановлены»/«все active»."""
+    leaders, active, stopped, failed, offline = [], [], [], [], []
+    for b, st in zip(bindings, states):
+        node = b["server_name"] or b["ip_address"]
+        if b["status"] == "leader":
+            leaders.append(node)
+        if st is None:
+            offline.append(node)
+        elif st.error:
+            failed.append((node, st.error))
+        elif st.running:
+            active.append(node)
+        else:
+            stopped.append(node)
+    segs = [f"leader {', '.join(leaders)}" if leaders else "без leader"]
+    probed = len(active) + len(stopped) + len(failed)      # ноды, ответившие по SSH
+    if active and not stopped:
+        segs.append("все active" if probed and len(active) == probed else f"▶ active: {', '.join(active)}")
+    elif active and stopped:
+        segs.append(f"▶ active: {', '.join(active)} · остальные остановлены")
+    elif stopped or failed:
+        segs.append("все остановлены")
+    elif offline and not active:
+        segs.append("🔌 все недоступны")
+    for node, err in failed:
+        segs.append(f"✗ {node} {err}")
+    if offline and (active or stopped or failed):
+        segs.append(f"🔌 offline: {', '.join(offline)}")
+    return " · ".join(segs)

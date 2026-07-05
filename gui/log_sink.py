@@ -54,13 +54,14 @@ class LogSink:
     # янтарный — внимание (standby / остановлен / отстаёт); красный — плохо (unavailable / сбой).
     _TOKENS = [
         (r"\bleader\b", ft.Colors.GREEN, 1),
-        (r"▶ active|▶ running|up-to-date", ft.Colors.GREEN, 1),
+        (r"▶ active|▶ running|\bactive\b|up-to-date", ft.Colors.GREEN, 1),
         (r"\bstandby\b", ft.Colors.AMBER, 1),
-        (r"■ inactive|■ stopped|✗ inactive", ft.Colors.AMBER, 1),
+        (r"■ inactive|■ stopped|✗ inactive|остановл\w*", ft.Colors.AMBER, 1),
+        (r"🔌|offline|недоступн\w*", ft.Colors.AMBER, 1),
         (r"отстаёт|впереди|разошлись|нет VERSION|вне истории|версия неизвестна",
          ft.Colors.AMBER, 1),
-        (r"\bunavailable\b", ft.Colors.RED, 2),
-        (r"✗ (?!inactive)\w+", ft.Colors.RED, 2),
+        (r"\bunavailable\b|\bfailed\b", ft.Colors.RED, 2),
+        (r"✗ (?!inactive)[\w.-]+", ft.Colors.RED, 2),
     ]
 
     @classmethod

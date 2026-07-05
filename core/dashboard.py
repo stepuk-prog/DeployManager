@@ -54,35 +54,52 @@ async def show(ssh: SshClient, db: Database, project_dir: str, local) -> list[di
         print("  Программы проекта не найдены в programdata.")
         return []
     ui.progress("Опрос версий на нодах…")
-    stale: dict[str, dict] = {}                       # ip → инфо (одна нода — один раз)
+    # привязки всех записей заранее (нужны и для версий по нодам, и для перечня сервисов)
+    binds: dict[int, list] = {rec["program_id"]: await db.get_service_bindings(rec["program_id"])
+                              for rec in records}
+    # группируем по folder: одна папка = один код = одна версия на ноду (не по каждому сервису)
+    groups: dict[str, list] = {}
     for rec in records:
-        folder = (rec["folder"] or "").rstrip("/")
-        bindings = await db.get_service_bindings(rec["program_id"])
-        print(f"\n▸ {rec['service_name']}  [id={rec['program_id']} · "
-              f"dispatcher={'on' if rec['dispatcher'] else 'off'} · "
-              f"активна={'да' if rec['status'] else 'нет'} · {folder or 'путь?'}]")
-        if not bindings:
-            print("    — нет привязок в dispatcher.service_status")
-            continue
+        groups.setdefault((rec["folder"] or "").rstrip("/"), []).append(rec)
 
-        async def _read_ver(ip: str):
-            if not folder:
-                return None
-            return parse_manifest(await ssh.read_file(ip, f"{folder}/{config.VERSION_FILE}"))
-
-        mans = await asyncio.gather(*[_read_ver(b["ip_address"]) for b in bindings])
-        for b, man in zip(bindings, mans):
-            ip = b["ip_address"]
-            node = b["server_name"] or ip
-            if man is None:
-                vinfo = "нет VERSION"
-            else:
+    stale: dict[str, dict] = {}                       # ip → инфо (одна нода — один раз)
+    lag_cache: dict[str, str] = {}                    # node_commit → текст отставания (git rev-list)
+    for folder, recs in groups.items():
+        # объединяем ноды всех сервисов папки (версия читается по ноде, а не по сервису)
+        nodes_by_ip: dict[str, str] = {}
+        for rec in recs:
+            for b in binds[rec["program_id"]]:
+                nodes_by_ip.setdefault(b["ip_address"], b["server_name"] or b["ip_address"])
+        # ── версии по нодам: один раз на папку (один код = одна версия на ноду) ──
+        print(f"\nКод: {folder or '(folder не задан в programdata)'}")
+        if not folder:
+            print("  версия неизвестна — путь установки не указан")
+        elif not nodes_by_ip:
+            print("  — нет привязок в dispatcher.service_status")
+        else:
+            ips = list(nodes_by_ip)
+            mans = await asyncio.gather(*[_read_manifest(ssh, ip, folder) for ip in ips])
+            for ip, man in zip(ips, mans):
+                node = nodes_by_ip[ip]
+                if man is None:
+                    print(f"  🔌 {node:16} нет VERSION")
+                    continue
                 nc = man.get("commit", "")
-                lag = _lag(project_dir, nc, local.commit)
-                vinfo = f"{man.get('short') or nc[:9]} · {lag}"
+                if nc not in lag_cache:
+                    lag_cache[nc] = _lag(project_dir, nc, local.commit)
+                lag = lag_cache[nc]
+                icon = "✅" if lag == "up-to-date" else "⚠️"
+                print(f"  {icon} {node:16} {lag:18} {man.get('short') or nc[:9]}")
                 if nc and nc != local.commit and ip not in stale:
                     stale[ip] = {"ip": ip, "name": node, "commit": nc, "lag": lag}
-            run = "▶ running" if b["running"] else "■ stopped"
-            print(f"    {node:16} {b['status']:11} {run:10} {vinfo}")
+        # ── сервисы этой папки: только реестр имён (детальное состояние/leader — в сводке
+        #    «Проверка состояния сервисов» выше; здесь не повторяем список нод по каждому юниту) ──
+        disp = sum(1 for r in recs if r["dispatcher"])
+        roster = ", ".join(r["service_name"] for r in recs)
+        print(f"Сервисы ({len(recs)}, под диспетчером {disp}): {roster}")
     ui.progress("")
     return list(stale.values())
+
+
+async def _read_manifest(ssh: SshClient, ip: str, folder: str) -> dict | None:
+    return parse_manifest(await ssh.read_file(ip, f"{folder}/{config.VERSION_FILE}"))
