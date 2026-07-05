@@ -19,6 +19,7 @@ import asyncpg
 from asyncpg.exceptions import (CannotConnectNowError, ConnectionDoesNotExistError,
                                 InterfaceError)
 
+from database.tg import TelegramMixin
 from logs import get_logger
 from settings import config
 
@@ -37,7 +38,7 @@ _PGBOUNCER_RECOVERABLE = (
 _ACQUIRE_TIMEOUT = 30
 
 
-class Database:
+class Database(TelegramMixin):
     def __init__(self, min_size: int = 1, max_size: int = 5):
         self.min_size = min_size
         self.max_size = max_size

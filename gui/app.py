@@ -7,6 +7,7 @@ from argparse import Namespace
 import flet as ft
 
 import cli
+import tools
 from classes.manifest import local_version
 from core import ui
 from gui.backend import FletUi
@@ -62,9 +63,9 @@ async def main(page: ft.Page):
         page.update()
 
     async def run_branch(action: str, component: str | None = None):
-        # infra-деплой (GD/WD/CD/DispatcherCtl) папку проекта НЕ требует — путь берётся из реестра.
-        # Действие (деплой / сверка версий / dry-run) выбирается меню'ю в самом infra-флоу.
-        if action != "infra" and not state["path"]:
+        # infra-деплой (GD/WD/CD/DispatcherCtl) и суб-инструменты (tools: сессии и пр.) папку
+        # проекта НЕ требуют — работают с БД напрямую. Прочие ветки требуют выбранный проект.
+        if action != "infra" and action not in tools.TOOL_KEYS and not state["path"]:
             sink.write("Сначала выберите папку проекта (кнопка «Обзор…»).\n")
             return
         set_busy(True)
@@ -101,7 +102,49 @@ async def main(page: ft.Page):
         branch_buttons.append(btn)
         return btn
 
-    page.add(
+    # ── навигатор экранов: flow-инструмент печатает в лог-панель (run_branch), screen-инструмент
+    #    (cookies и пр.) ПЕРЕКЛЮЧАЕТ страницу на свой встроенный экран с кнопкой «← Назад» ──
+    nav = {"teardown": None}
+
+    async def go_home():
+        td = nav.pop("teardown", None)
+        nav["teardown"] = None
+        if td is not None:
+            try:
+                await td()                 # закрыть пулы БД/браузер экрана, вернуть stdout
+            except Exception as ex:         # noqa: BLE001 — не падать на выходе
+                print(f"⚠️ Ошибка выхода с экрана: {ex}")
+        page.controls.clear()
+        page.add(*home_controls)
+        page.update()
+
+    async def open_screen(tool: dict):
+        if nav.get("teardown") is not None:   # уже на каком-то экране — сперва закрыть
+            await go_home()
+        page.controls.clear()
+        page.update()
+        try:
+            nav["teardown"] = await tools.build_screen(tool["key"], page, go_home)
+        except Exception as ex:               # noqa: BLE001 — вернуть домой с сообщением
+            page.controls.clear()
+            page.add(*home_controls)
+            sink.write(f"‼️ Не удалось открыть «{tool['label']}»: {ex}\n")
+            page.update()
+
+    def tool_btn(tool: dict) -> ft.Control:
+        # суб-инструмент из реестра tools. flow → run_branch (лог-панель); screen → open_screen.
+        if tool["kind"] == "screen":
+            handler = lambda e, t=tool: page.run_task(open_screen, t)
+        else:
+            handler = lambda e, k=tool["key"]: page.run_task(run_branch, k)
+        btn = ft.Button(
+            content=ft.Text(f"{tool['icon']} {tool['label']}", color=ft.Colors.WHITE),
+            bgcolor=getattr(ft.Colors, tool["color"], ft.Colors.TEAL_600),
+            on_click=handler)
+        branch_buttons.append(btn)
+        return btn
+
+    home_controls = [
         ft.Row([path_field, ft.Button(content=ft.Text("📂 Обзор…"), on_click=choose_project)]),
         ft.Row([ft.Text("Версия:"), version_lbl]),
         ft.Row([
@@ -120,10 +163,14 @@ async def main(page: ft.Page):
             infra_btn("🌐 CD", "CD"),
             infra_btn("🌐 DispatcherCtl", "DispatcherCtl"),
         ], wrap=True),
+        ft.Row([ft.Text("Инструменты (без выбора проекта):", italic=True,
+                        color=ft.Colors.TEAL_300)]),
+        ft.Row([tool_btn(t) for t in tools.TOOLS], wrap=True),
         ft.Row([spinner, status_lbl,
                 ft.TextButton(content=ft.Text("🧹 Очистить лог"),
                               on_click=lambda _: sink.clear())],
                alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
         ft.Container(content=log_view, expand=True, padding=8,
                      border=ft.Border.all(1, ft.Colors.GREY), border_radius=6),
-    )
+    ]
+    page.add(*home_controls)

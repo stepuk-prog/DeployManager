@@ -19,11 +19,13 @@ from core import validate as validate_mod
 from core import verify as verify_mod
 from database import Database
 from settings import config
+import tools
 
 # Три основные ветки + служебные действия для автоматизации.
 _ACTION_MAP = {"new": "1", "add": "2", "check": "3", "dashboard": "3", "status": "3",
                "create": "create", "state": "state", "manage": "manage", "uninstall": "uninstall",
-               "sync": "sync", "env": "sync", "infra": "infra"}
+               "sync": "sync", "env": "sync", "infra": "infra", "sessions": "sessions",
+               "cookies": "cookies"}
 
 
 async def _ask(prompt: str, default: str = "") -> str:
@@ -545,11 +547,17 @@ async def run(args=None):
             "  [3] проверить версии на серверах (vs локальной)\n"
             "  [4] обновить .env / service-файлы на серверах (без передеплоя)\n"
             "  [5] деплой инфра-компонента диспетчера (GD / WD / CD / DispatcherCtl)\n"
+            "  [6] юзерботы (сессии): логин → session_string в telegram.telegram\n"
+            "  [7] cookies (OTC/Screen/TV/Binodex) — GUI-only, видимый браузер\n"
             "  [q] выход\nВыбор", "1")
         if action == "4":
             action = "sync"
         if action == "5":
             action = "infra"
+        if action == "6":
+            action = "sessions"
+        if action == "7":
+            action = "cookies"
         if action == "q":
             return
         if action == "infra":   # control-plane (GD/WD/CD/DispatcherCtl) — в обход programdata
@@ -558,6 +566,14 @@ async def run(args=None):
             op = "check" if getattr(args, "check", False) else ("dry-run" if dry_run else None)
             await infra_deploy.run_infra(db, ssh, component=getattr(args, "component", None),
                                          operation=op)
+            return
+        if action in tools.TOOL_KEYS:   # суб-инструменты (сессии и будущие) — БД есть, проект/SSH не нужны
+            tool = tools.get_tool(action)
+            if tool["kind"] == "screen":   # GUI-only экран (свой UI/браузер) — из CLI не запускается
+                print(f"🍪 «{tool['label']}» — GUI-only инструмент (видимый браузер). "
+                      f"Запусти через GUI: .venv/bin/python gui_main.py")
+                return
+            await tools.run_tool(action, db)
             return
 
         # ── все прочие ветки требуют папку проекта ──

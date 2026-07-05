@@ -3,3 +3,8 @@ asyncssh~=2.21.0
 python-dotenv~=1.2.2
 questionary~=2.1.1
 flet~=0.85.2
+# суб-инструмент «Юзерботы (сессии)» — логин Pyrogram/pyrofork → session_string
+pyrofork~=2.3.69
+tgcrypto-pyrofork~=1.2.8
+# суб-инструмент «Cookies» (OTC/Screen/TV/Binodex) — сбор cookies через видимый браузер
+playwright~=1.47.0

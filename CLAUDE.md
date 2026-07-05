@@ -8,9 +8,9 @@ GitHub: `git@github.com-stepuk:stepuk-prog/DeployManager.git` (alias `github.com
 
 ## Запуск / тесты / окружение
 - GUI: `.venv/bin/python gui_main.py` (Flet). CLI: `.venv/bin/python main.py [--action …]`.
-- CLI-флаги: `--project PATH --action {new,add,check,create,state,manage,uninstall} --command {start,stop,restart} --nodes all|... --dry-run --yes`.
+- CLI-флаги: `--project PATH --action {new,add,check,create,state,manage,uninstall,sync,infra,sessions,cookies} --command {start,stop,restart} --nodes all|... --dry-run --yes`. (`cookies` — GUI-only, из CLI печатает подсказку.)
 - Тесты: `PYTHONPATH=. .venv/bin/python -m pytest tests/ -q` (чистая логика, без БД/SSH).
-- `.env` (gitignored) — креды БД Program + SSH. Ключи: `PG_*`, `SSH_USER=vova`, `SSH_KEY=/home/vlad/.ssh/id_rsa`, `PRIV_USER=root`, `PROJECTS_DIR`, `DISPATCHER_DIR` (корень Dispatcher2.0 для деплоя control-plane; дефолт `PROJECTS_DIR/Dispatcher2.0`), `RSYNC_DELETE`, `PLAYWRIGHT_BROWSER`, `PROVISION`.
+- `.env` (gitignored) — креды БД Program + SSH. Ключи: `PG_*`, `SSH_USER=vova`, `SSH_KEY=/home/vlad/.ssh/id_rsa`, `PRIV_USER=root`, `PROJECTS_DIR`, `DISPATCHER_DIR` (корень Dispatcher2.0 для деплоя control-plane; дефолт `PROJECTS_DIR/Dispatcher2.0`), `RSYNC_DELETE`, `PLAYWRIGHT_BROWSER`, `PROVISION`, `TELEGRAM_APPS` (суб-инструмент сессий; дефолт `my_gram,telegram_apps`), `PG_DB_BINODEX`/`TG_TOKEN`/`TG_CHANNEL`/`OTC_HEADLESS`/`BINODEX_HEADLESS`/`BINODEX_VW`/`BINODEX_VH` (суб-инструмент cookies).
 - venv в проекте — **`.venv`** (на серверах у проектов — `venv`, см. `config.VENV_DIR`).
 
 ## Архитектура (ядро UI-агностично)
@@ -31,6 +31,11 @@ GitHub: `git@github.com-stepuk:stepuk-prog/DeployManager.git` (alias `github.com
 - `core/audit.py` — файловый audit (`logs/deploy_audit.log`).
 - `cli.py` — `run(args)`, ветки, `_deploy_flow`, `_preflight`, `_leader_guard`, `_bind_and_report`, `_journal_deploy`.
 - `gui/` — Flet: `app.py` (окно), `backend.py` (FletUi — диалоги через asyncio.Future, один event-loop), `log_sink.py` (stdout→лог-панель + цвет).
+- `tools/` — **реестр суб-инструментов** (не деплой, но живут в том же окне/CLI). `tools/__init__.py`: `TOOLS` (дескрипторы key/**kind**/label/icon/color/module), `TOOL_KEYS`, `get_tool`, `run_tool(key, db)` (flow), `build_screen(key, page, on_back)` (screen). Меню CLI (`cli.run`, пункты `[6]`/`[7]`) и ряд кнопок GUI строятся ИЗ реестра → **новый инструмент = одна запись + подпакет**, без правок cli/gui. Не требуют папки проекта/SSH (гард в `cli.run`/`gui.run_branch` пропускает `action in tools.TOOL_KEYS`, как для `infra`). Два вида (`kind`):
+  - **flow** — CLI/лог-панельный: `async run(db)` (stdout→лог), переиспользует `core.ui`/`gui`/`Database`. Работает и в CLI, и в GUI.
+  - **screen** — GUI-only экран со своим UI/жизненным циклом: `async build_screen(page, on_back) -> teardown`. Кнопка GUI переключает страницу (`gui/app.py` навигатор `open_screen`/`go_home`, `teardown` закрывает ресурсы экрана и возвращает stdout); из CLI печатает «GUI-only».
+  - `tools/sessions/` (**flow**) — **«Юзерботы (сессии)»** (из SessionManager): логин юзербота (pyrofork; опц. Telethon) → `session_string` в `telegram.telegram`. `session.py`/`apps.py`/`recover.py`/`__init__.py` (под-меню list/recover/create). Телеграм-методы БД — `database/tg.py` (`TelegramMixin` в `Database`). Зависимости `pyrofork`/`tgcrypto-pyrofork`. **Прод: recover/create ПИШУТ — после `ui.confirm`; код входа вручную.**
+  - `tools/cookies/` (**screen**) — **«Cookies»** (vendored CookiesProgram2 целиком: свои `settings/database/apps/classes/messages/gui/logs`, импорты namespaced `tools.cookies.*`). Вкладки OTC Option/OTC Screen/TradingView/Binodex, сбор cookies через **видимый браузер** (`async_playwright`, ручное вмешательство). **Свой слой БД — 2 пула (`program`+`binodex`), jsonb-codec, контракт `execute_query→False`** (изолирован от `database.Database`). Точка входа — `tools/cookies/gui/app.py:build_screen`. Зависимость `playwright` (firefox). Env: `PG_DB_BINODEX`/`TG_TOKEN`/`TG_CHANNEL`/`*_HEADLESS`/`BINODEX_VW/VH`. **Прод: пишет cookies в `cookies.*`/`binodex.cookies.binodex_cookies`; браузер headful, боевой флоу — оператор.**
 
 ## БД Program (ключевые объекты)
 - `vocabulary.nodes` — серверы (id, hostname, server_name, ip_address, is_online).

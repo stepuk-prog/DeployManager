@@ -2,6 +2,45 @@
 
 Все значимые изменения DeployManager. Формат — по разделам Added / Changed / Fixed.
 
+## 2026-07-05
+
+### Added
+- **Реестр суб-инструментов `tools/`** — расширяемая точка для утилит, живущих в том же
+  окне/CLI, но не про деплой. `tools/__init__.py`: `TOOLS` (дескрипторы key/**kind**/label/
+  icon/color/module), `TOOL_KEYS`, `run_tool(key,db)` (flow), `build_screen(key,page,on_back)`
+  (screen). Меню CLI (`[6]`/`[7]`) и кнопки GUI строятся ИЗ реестра → новый инструмент = одна
+  запись + подпакет, без правок cli/gui. Не требуют папки проекта/SSH (гард уважает `TOOL_KEYS`).
+  Два вида: **flow** (`async run(db)`, лог-панель, CLI+GUI) и **screen** (GUI-only экран со своим
+  UI/жизненным циклом: `build_screen(page,on_back)->teardown`; навигатор `open_screen`/`go_home`).
+- **Суб-инструмент «Юзерботы (сессии)»** (`tools/sessions/`, интеграция SessionManager, kind=flow)
+  — логин юзербота (pyrofork; опц. Telethon) → `session_string` в `telegram.telegram`. Под-меню
+  list/recover/create. Телеграм-методы БД — `database/tg.py` (`TelegramMixin` в `Database`).
+  Зависимости `pyrofork`/`tgcrypto-pyrofork`; env `TELEGRAM_APPS`.
+- **Суб-инструмент «Cookies»** (`tools/cookies/`, vendored CookiesProgram2, kind=screen) —
+  вкладки OTC Option/OTC Screen/TradingView/Binodex, сбор cookies через **видимый браузер**
+  (`async_playwright`). Самодостаточный суб-пакет (свои `settings/database/apps/classes/messages/
+  gui/logs`, импорты namespaced `tools.cookies.*`; свои 2 пула БД `program`+`binodex`, jsonb-codec,
+  контракт `execute_query→False`). Встроен как экран в окно DeployManager (`build_screen`, «← Назад»,
+  teardown закрывает пулы/браузер и возвращает stdout). Зависимость `playwright` (firefox);
+  env `PG_DB_BINODEX`/`TG_TOKEN`/`TG_CHANNEL`/`OTC_HEADLESS`/`BINODEX_HEADLESS`/`BINODEX_VW`/`BINODEX_VH`.
+
+### Changed
+- **Дашборд «Проверить версии»** (`core/dashboard.py`): версии — **один список нод на папку**
+  (одна папка = один код; кэш чтения `VERSION` по `(folder,ip)` и `git rev-list` по коммиту),
+  без повтора по каждому service-юниту; сервисы — компактный реестр имён.
+- **«Проверка состояния сервисов»** (`core/state.py`): **сводка-строка на сервис** (leader +
+  агрегат «все остановлены»/«все active», поимённо только отклонения active/failed/offline)
+  вместо стены `нода × сервис`.
+- `gui/log_sink.py`: подсветка новых значений (`все active`/`остановлены`/`✗ NODE`/`🔌 offline`/`failed`).
+- `gui/app.py`: навигатор экранов (screen-инструменты переключают страницу); гард «без проекта»
+  уважает `tools.TOOL_KEYS`. `database/db.py`: `Database(TelegramMixin)`.
+
+### Note
+- Зависимости: `requirements.txt` += `pyrofork`, `tgcrypto-pyrofork`, `playwright`.
+- Оригиналы `../SessionManager` и `../CookiesProgram2` НЕ тронуты (интеграция = копия внутрь).
+- Боевые флоу (живой логин юзербота; сбор cookies через видимый браузер, Telegram-уведомления) —
+  ПИШУТ в прод-БД, выполняет оператор вручную.
+
 ## 2026-07-01
 
 ### Added

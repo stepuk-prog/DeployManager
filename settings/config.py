@@ -18,6 +18,14 @@ PG_USER = os.getenv("PG_USER")
 PG_PASSWORD = os.getenv("PG_PASSWORD")
 PG_PORT = int(os.getenv("PG_PORT", "6442"))
 
+# ----- Telegram Desktop клиенты (суб-инструмент «Юзерботы (сессии)») -----
+# TELEGRAM_APPS="<поле-FK в telegram.telegram>,<таблица-справочник в схеме telegram>".
+# Первое — колонка с app_name клиента (по ней знаем, какой Desktop поднять при логине юзербота),
+# второе — справочник клиентов (app_name PK, exec_path, workdir, icon, is_system). Дефолт рабочий.
+_tg_apps = [p.strip() for p in os.getenv("TELEGRAM_APPS", "my_gram,telegram_apps").split(",")]
+TG_APP_FIELD = _tg_apps[0] if _tg_apps and _tg_apps[0] else "my_gram"
+TG_APPS_TABLE = _tg_apps[1] if len(_tg_apps) > 1 and _tg_apps[1] else "telegram_apps"
+
 # ----- SSH (vova + passwordless sudo) -----
 SSH_USER = os.getenv("SSH_USER", "vova")
 SSH_KEY = str(Path(os.getenv("SSH_KEY", "~/.ssh/id_nodes")).expanduser())
