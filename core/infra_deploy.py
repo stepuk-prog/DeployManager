@@ -104,7 +104,12 @@ INFRA_COMPONENTS: dict[str, InfraComponent] = {
         project_subdir="DispatcherCtl",
         remote_folder="/opt/DispatcherCtl",
         units=(),
-        nodes="cluster",
+        # nodes="all" (2026-07-06): DispatcherCtl сам определяет роль по hostname
+        # (get_dispatcher_role: claster=true→'leader' полный набор; иначе→'local',
+        # где leader/break-glass команды скрыты и заблокированы, остаётся read-only
+        # rank/show). Ставим на ВСЕ ноды: оператору на бот-ноде полезен локальный
+        # `show`. Было "cluster" — противоречило дизайну (бот-ноды не получали tool).
+        nodes="all",
         node_env={},
         restart=False,
     ),
