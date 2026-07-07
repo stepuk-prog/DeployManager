@@ -49,8 +49,19 @@ class Deployer:
         if not dry_run:  # создаём каталог явно (совместимо со старым rsync без --mkpath)
             mk = await self.ssh.run(host, f"mkdir -p {shlex.quote(folder)}", timeout=15)
             if not mk.ok:
-                logger.error("mkdir %s FAILED: %s", host, mk.stderr or mk.stdout)
-                return False
+                # СВЕЖАЯ папка в /opt (root:root 755) — vova не может mkdir. Создаём под
+                # root и отдаём владение vova, чтобы последующий rsync под vova прошёл
+                # (иначе «деплой с нуля» на чистую ноду падал на Permission denied).
+                mk_priv = await self.ssh.run_priv(
+                    host,
+                    f"mkdir -p {shlex.quote(folder)} && "
+                    f"chown {config.SSH_USER}:{config.SSH_USER} {shlex.quote(folder)}",
+                    timeout=15,
+                )
+                if not mk_priv.ok:
+                    logger.error("mkdir %s FAILED (vova и root): %s", host,
+                                 mk_priv.stderr or mk_priv.stdout or mk.stderr)
+                    return False
         src = project_dir.rstrip("/") + "/"
         dst = f"{config.SSH_USER}@{host}:{folder}/"
         cmd = ["rsync", "-az", f"--timeout={config.RSYNC_TIMEOUT}"]

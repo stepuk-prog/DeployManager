@@ -267,7 +267,20 @@ async def _deploy_one(ssh: SshClient, deployer: Deployer, comp: InfraComponent,
     if write_env:
         base = _read_env_base(comp)
         if base is None:
-            print(f"  [{name}] ⚠️ нет базы {comp.env_base} — .env пропущен (прод сохранён)")
+            # Базы env/<KEY>.env нет → .env не рендерим. Безопасно ТОЛЬКО если .env
+            # УЖЕ есть на ноде (in-place-деплой сохраняет прод-конфиг). На СВЕЖЕЙ
+            # ноде/миграции прод-.env нет → компонент стартует без конфига → крэш-луп
+            # (CD 2026-07-04: FATAL «4 validation errors»). Раньше тут был тихий
+            # print + «успех» → маскировал провал. Теперь различаем.
+            env_path = os.path.join(comp.remote_folder, ".env")
+            if await ssh.path_exists(ip, env_path):
+                print(f"  [{name}] ⚠️ нет базы {comp.env_base} — .env сохранён (прод на ноде)")
+            else:
+                return DeployResult(
+                    name, ip, False, "no_env",
+                    f"нет базы {comp.env_base} И нет .env на ноде — компонент без "
+                    f"конфига (крэш-луп). Завести env/<KEY>.env из .example.",
+                )
         elif not await _write_env(ssh, ip, comp.remote_folder, _render_env(base, node, comp.node_env)):
             return DeployResult(name, ip, False, "write_env")
 
