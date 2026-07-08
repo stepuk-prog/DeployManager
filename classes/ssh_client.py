@@ -107,6 +107,84 @@ class SshClient:
             return await self.run(host, command, timeout=timeout, user=config.PRIV_USER)
         return await self.run(host, command, timeout=timeout, sudo=True)
 
+    async def _stream(self, conn, command: str, timeout: int, echo) -> CmdResult:
+        """Прогнать команду, стримя вывод (stdout+stderr слиты) построчно в echo(line).
+        Для длинных прогонов (apt, сборка haproxy, provision) — живой лог, а не тишина."""
+        lines: list[str] = []
+        try:
+            async with conn.create_process(f"{command} 2>&1", term_type=None) as proc:
+                async def _pump():
+                    async for line in proc.stdout:
+                        line = line.rstrip("\n")
+                        lines.append(line)
+                        if echo:
+                            echo(line)
+                await asyncio.wait_for(_pump(), timeout=timeout)
+                await proc.wait()
+                ex = proc.exit_status if proc.exit_status is not None else 1
+        except asyncio.TimeoutError:
+            return CmdResult(False, 255, "\n".join(lines), f"timeout {timeout}s")
+        return CmdResult(ex == 0, ex, "\n".join(lines), "")
+
+    async def run_stream(self, host: str, command: str, timeout: int = 300,
+                         echo=None, user: str | None = None) -> CmdResult:
+        """run() со стримингом вывода (echo построчно). Под user (по умолч. SSH_USER)."""
+        user = user or config.SSH_USER
+        last = ""
+        for _ in (1, 2):
+            try:
+                conn = await self._get(host, user)
+                return await self._stream(conn, command, timeout, echo)
+            except (asyncssh.Error, OSError) as e:
+                last = str(e)
+                await self._drop((user, host))
+        logger.error("SSH %s: стрим %r — %s", host, command, last)
+        return CmdResult(False, 255, "", last)
+
+    async def upload(self, host: str, local_path: str, remote_path: str,
+                     user: str | None = None, mode: int | None = None) -> bool:
+        """SFTP-заливка файла на ноду под user (по кэш-соединению, ключ). mode — chmod после."""
+        user = user or config.SSH_USER
+        last = ""
+        for _ in (1, 2):
+            try:
+                conn = await self._get(host, user)
+                async with conn.start_sftp_client() as sftp:
+                    await sftp.put(local_path, remote_path)
+                if mode is not None:
+                    await conn.run(f"chmod {mode:o} {shlex.quote(remote_path)}", check=False)
+                return True
+            except (asyncssh.Error, OSError) as e:
+                last = str(e)
+                await self._drop((user, host))
+        logger.error("SFTP %s→%s@%s: %s", local_path, remote_path, host, last)
+        return False
+
+    async def bootstrap_run(self, host: str, password: str, uploads: list[tuple[str, str]],
+                            command: str, timeout: int, echo=None) -> CmdResult:
+        """ОДНОРАЗОВЫЙ парольный коннект root@host (вне ключевого кэша — provision-base
+        выключает PasswordAuthentication, ключ появляется только после него). Заливает
+        uploads [(local, remote)] по SFTP (chmod +x), затем стримит command. Соединение
+        закрывается по выходу — этим паролем больше не пользуемся."""
+        try:
+            conn = await asyncssh.connect(
+                host=host, port=config.SSH_PORT, username="root",
+                password=password, known_hosts=None,
+                connect_timeout=config.SSH_CONNECT_TIMEOUT,
+            )
+        except asyncssh.PermissionDenied:
+            return CmdResult(False, 255, "", f"root@{host}: пароль отвергнут (или PasswordAuthentication уже off)")
+        except (asyncssh.Error, OSError) as e:
+            return CmdResult(False, 255, "", f"парольный коннект root@{host} не удался: {e}")
+        try:
+            async with conn.start_sftp_client() as sftp:
+                for local, remote in uploads:
+                    await sftp.put(local, remote)
+                    await conn.run(f"chmod +x {shlex.quote(remote)}", check=False)
+            return await self._stream(conn, command, timeout, echo)
+        finally:
+            conn.close()
+
     async def read_file(self, host: str, path: str) -> str | None:
         res = await self.run(host, f"cat {shlex.quote(path)}", timeout=15)
         return res.stdout if res.ok else None

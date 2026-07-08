@@ -25,7 +25,7 @@ import tools
 _ACTION_MAP = {"new": "1", "add": "2", "check": "3", "dashboard": "3", "status": "3",
                "create": "create", "state": "state", "manage": "manage", "uninstall": "uninstall",
                "sync": "sync", "env": "sync", "infra": "infra", "sessions": "sessions",
-               "cookies": "cookies"}
+               "cookies": "cookies", "setup-node": "setup-node", "node": "setup-node"}
 
 
 async def _ask(prompt: str, default: str = "") -> str:
@@ -550,6 +550,7 @@ async def run(args=None):
             "  [5] деплой инфра-компонента диспетчера (GD / WD / CD / DispatcherCtl)\n"
             "  [6] юзерботы (сессии): логин → session_string в telegram.telegram\n"
             "  [7] cookies (OTC/Screen/TV/Binodex) — GUI-only, видимый браузер\n"
+            "  [8] настроить новую ноду (bootstrap → тип → регистрация → Watchdog)\n"
             "  [q] выход\nВыбор", "1")
         if action == "4":
             action = "sync"
@@ -559,7 +560,13 @@ async def run(args=None):
             action = "sessions"
         if action == "7":
             action = "cookies"
+        if action == "8":
+            action = "setup-node"
         if action == "q":
+            return
+        if action == "setup-node":   # turnkey ввод новой ноды — SSH+БД, папка проекта не нужна
+            from core import setup_node
+            await setup_node.run_setup_node(db, ssh, dry_run=dry_run)
             return
         if action == "infra":   # control-plane (GD/WD/CD/DispatcherCtl) — в обход programdata
             from core import infra_deploy

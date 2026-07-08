@@ -10,7 +10,7 @@ def _parse_args():
     p.add_argument("--project", help="папка проекта (по умолчанию спросит/cwd)")
     p.add_argument("--action",
                    choices=["new", "add", "check", "create", "state", "manage", "uninstall",
-                            "sync", "infra", "sessions", "cookies"],
+                            "sync", "infra", "sessions", "cookies", "setup-node"],
                    help="ветка без меню: new (с нуля) / add (добавить сервер) / "
                         "check (версии) / create / state / manage / uninstall / sync (.env+юниты) / "
                         "infra (деплой control-plane компонента: --component) / "

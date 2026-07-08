@@ -511,4 +511,23 @@ async def run_infra(db: Database, ssh: SshClient, *, component: str | None = Non
                           rsync_code=rsync_code, write_env=write_env, dry_run=dry_run)
 
 
-__all__ = ["INFRA_COMPONENTS", "InfraComponent", "run_infra"]
+async def deploy_component_to_node(ssh: SshClient, node, *, component: str = "WD",
+                                   dry_run: bool = False) -> DeployResult:
+    """Раскатать один control-plane компонент (по умолч. WD) на ОДНУ ноду — движок тот же,
+    что у полного инфра-деплоя (`_deploy_one`). Для turnkey «Настроить ноду». `node` —
+    Record из vocabulary.nodes (нужны ip_address/server_name/hostname/claster)."""
+    comp = INFRA_COMPONENTS[component]
+    project_dir = os.path.join(config.DISPATCHER_DIR, comp.project_subdir)
+    common_dir = os.path.join(config.DISPATCHER_DIR, COMMON_SUBDIR)
+    if not os.path.isdir(project_dir):
+        return DeployResult(_node_name(node), node["ip_address"], False, "no-project",
+                            f"нет каталога {project_dir}")
+    local = local_version(project_dir)
+    manifest_json = build_manifest(local, getpass.getuser(),
+                                   datetime.now().isoformat(timespec="seconds"))
+    deployer = Deployer(ssh)
+    return await _deploy_one(ssh, deployer, comp, project_dir, common_dir, node,
+                             manifest_json, rsync_code=True, write_env=True, dry_run=dry_run)
+
+
+__all__ = ["INFRA_COMPONENTS", "InfraComponent", "run_infra", "deploy_component_to_node"]

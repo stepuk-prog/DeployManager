@@ -1,0 +1,137 @@
+"""Тесты «Настроить ноду» (core/setup_node) — чистая логика, без реальных БД/SSH/нод.
+
+Гоняем async-оркестратор через asyncio.run с фейковыми db/ssh и скриптовым ui-бэкендом
+(как в test_ui). Главное: гарды (битый IP, дубль, нет скриптов/ключа) и что dry-run
+НЕ делает записей (create_node/bootstrap_run/whitelist не зовутся).
+"""
+import asyncio
+
+from core import setup_node, ui
+from settings import config
+
+
+# ── фейки ──
+class FakeUi:
+    """ui-бэкенд со скриптовыми ответами: asks (очередь), select_idx, confirm_val."""
+    def __init__(self, asks, select_idx=0, confirm_val=False):
+        self._asks = list(asks)
+        self.select_idx = select_idx
+        self.confirm_val = confirm_val
+
+    async def ask(self, prompt, default="", **kw):
+        return self._asks.pop(0) if self._asks else default
+
+    async def confirm(self, prompt, danger=False, **kw):
+        return self.confirm_val
+
+    async def select(self, title, labels, default_index=0, details=None,
+                      colors=None, cancel_in_grid=False):
+        return self.select_idx
+
+
+class FakeDb:
+    def __init__(self, dup=None):
+        self._dup = dup
+        self.calls = []
+
+    async def find_node_by_ip(self, ip):
+        self.calls.append(("find", ip))
+        return self._dup
+
+    async def create_node(self, hostname, ip, server_name, claster=False):
+        self.calls.append(("create", ip, hostname, server_name, claster))
+        return 999
+
+    async def set_node_online(self, node_id, online=True):
+        self.calls.append(("online", node_id, online))
+
+
+class FakeSsh:
+    """Любой вызов ssh в dry-run — ошибка теста (не должно быть)."""
+    def __init__(self):
+        self.calls = []
+
+    def __getattr__(self, name):
+        async def _rec(*a, **kw):
+            self.calls.append((name, a))
+            raise AssertionError(f"ssh.{name} не должен вызываться в dry-run")
+        return _rec
+
+
+def _scaffold(tmp_path, monkeypatch, *, scripts=True, pubkey=True):
+    """Разложить tmp CLUSTERS_DIR/scripts/* и SSH_KEY(+.pub); подменить config."""
+    sdir = tmp_path / "scripts"
+    sdir.mkdir()
+    if scripts:
+        for f in ("provision-base.sh", "provision-client.sh", "whitelist-ip.sh"):
+            (sdir / f).write_text("#!/usr/bin/env bash\n")
+    key = tmp_path / "id_nodes"
+    key.write_text("PRIVATE")
+    if pubkey:
+        (tmp_path / "id_nodes.pub").write_text("ssh-ed25519 AAAA vova@ws\n")
+    monkeypatch.setattr(config, "CLUSTERS_DIR", str(tmp_path))
+    monkeypatch.setattr(config, "SSH_KEY", str(key))
+
+
+def _run(db, ssh, ui_backend, monkeypatch):
+    audit_rec = {}
+    monkeypatch.setattr(setup_node.audit, "write", lambda rec: audit_rec.update(rec))
+    ui.set_backend(ui_backend)
+    try:
+        asyncio.run(setup_node.run_setup_node(db, ssh, dry_run=True))
+    finally:
+        ui.set_backend(None)
+    return audit_rec
+
+
+# ── тесты ──
+def test_missing_scripts_guard(tmp_path, monkeypatch):
+    _scaffold(tmp_path, monkeypatch, scripts=False)
+    db = FakeDb()
+    _run(db, FakeSsh(), FakeUi(["1.2.3.4"]), monkeypatch)
+    assert db.calls == []                       # до БД не дошли
+
+
+def test_missing_pubkey_guard(tmp_path, monkeypatch):
+    _scaffold(tmp_path, monkeypatch, pubkey=False)
+    db = FakeDb()
+    _run(db, FakeSsh(), FakeUi(["1.2.3.4"]), monkeypatch)
+    assert db.calls == []
+
+
+def test_invalid_ip_aborts(tmp_path, monkeypatch):
+    _scaffold(tmp_path, monkeypatch)
+    db = FakeDb()
+    _run(db, FakeSsh(), FakeUi(["не-ip"]), monkeypatch)
+    assert db.calls == []                        # даже дубль-гард не трогали
+
+
+def test_duplicate_ip_aborts(tmp_path, monkeypatch):
+    _scaffold(tmp_path, monkeypatch)
+    db = FakeDb(dup={"id": 5, "server_name": "OLD", "hostname": "old"})
+    _run(db, FakeSsh(), FakeUi(["1.2.3.4", "n-node8", "N8", "pw"]), monkeypatch)
+    assert db.calls == [("find", "1.2.3.4")]     # дубль найден → стоп, create не звали
+    assert not any(c[0] == "create" for c in db.calls)
+
+
+def test_dry_run_no_writes(tmp_path, monkeypatch):
+    _scaffold(tmp_path, monkeypatch)
+    db = FakeDb(dup=None)
+    ssh = FakeSsh()
+    # ordinary-узел: select_idx=0; ответы формы по порядку
+    audit_rec = _run(db, ssh, FakeUi(["1.2.3.4", "n-node8", "N8", "pw"], select_idx=0),
+                     monkeypatch)
+    assert ("find", "1.2.3.4") in db.calls       # дубль-гард отработал
+    assert not any(c[0] == "create" for c in db.calls)   # НЕ пишем в БД в dry-run
+    assert not any(c[0] == "online" for c in db.calls)
+    assert ssh.calls == []                        # ssh не трогали в dry-run
+    assert audit_rec.get("dry_run") is True
+    assert audit_rec.get("type") == "client"
+
+
+def test_cluster_branch_is_stub(tmp_path, monkeypatch):
+    _scaffold(tmp_path, monkeypatch)
+    db = FakeDb(dup=None)
+    # select_idx=1 → «Элемент кластера» = заглушка: не регистрируем, не деплоим
+    _run(db, FakeSsh(), FakeUi(["1.2.3.4", "n-node8", "N8", "pw"], select_idx=1), monkeypatch)
+    assert not any(c[0] == "create" for c in db.calls)

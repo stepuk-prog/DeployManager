@@ -65,7 +65,7 @@ async def main(page: ft.Page):
     async def run_branch(action: str, component: str | None = None):
         # infra-деплой (GD/WD/CD/DispatcherCtl) и суб-инструменты (tools: сессии и пр.) папку
         # проекта НЕ требуют — работают с БД напрямую. Прочие ветки требуют выбранный проект.
-        if action != "infra" and action not in tools.TOOL_KEYS and not state["path"]:
+        if action not in ("infra", "setup-node") and action not in tools.TOOL_KEYS and not state["path"]:
             sink.write("Сначала выберите папку проекта (кнопка «Обзор…»).\n")
             return
         set_busy(True)
@@ -99,6 +99,16 @@ async def main(page: ft.Page):
             content=ft.Text(label, color=ft.Colors.WHITE),
             bgcolor=ft.Colors.INDIGO_600,
             on_click=lambda e, c=component: page.run_task(run_branch, "infra", c))
+        branch_buttons.append(btn)
+        return btn
+
+    def node_btn(label: str) -> ft.Control:
+        # turnkey ввод новой ноды (bootstrap → тип → регистрация → WD). БД+SSH,
+        # папка проекта не нужна (как control-plane). Зелёный — «поднять новый узел».
+        btn = ft.Button(
+            content=ft.Text(label, color=ft.Colors.WHITE),
+            bgcolor=ft.Colors.GREEN_700,
+            on_click=lambda e: page.run_task(run_branch, "setup-node"))
         branch_buttons.append(btn)
         return btn
 
@@ -162,6 +172,7 @@ async def main(page: ft.Page):
             infra_btn("🌐 WD", "WD"),
             infra_btn("🌐 CD", "CD"),
             infra_btn("🌐 DispatcherCtl", "DispatcherCtl"),
+            node_btn("🖥️ Настроить ноду"),
         ], wrap=True),
         ft.Row([ft.Text("Инструменты (без выбора проекта):", italic=True,
                         color=ft.Colors.TEAL_300)]),

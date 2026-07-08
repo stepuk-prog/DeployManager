@@ -180,6 +180,37 @@ class Database(TelegramMixin):
             func="get_online_nodes",
         )
 
+    async def find_node_by_ip(self, ip_address: str) -> asyncpg.Record | None:
+        """Узел по IP (гард дублей при регистрации новой ноды). None — если нет."""
+        return await self._query(
+            "SELECT id, hostname, server_name, ip_address, is_online, claster "
+            "FROM vocabulary.nodes WHERE ip_address = $1",
+            ip_address, mode="row", func="find_node_by_ip",
+        )
+
+    async def create_node(self, hostname: str, ip_address: str,
+                          server_name: str | None, claster: bool = False) -> int:
+        """Зарегистрировать узел в vocabulary.nodes — ПОСЛЕ того, как он реально настроен
+        (никаких ghost-строк для непровизиненного ящика). id генерирует БД (IDENTITY) —
+        НЕ передаём. is_online остаётся дефолтным false: оживит мониторинг/агент, когда
+        узел начнёт слать хартбит. Остальные NOT NULL-колонки имеют дефолты. Возвращает id."""
+        node_id = await self._query(
+            "INSERT INTO vocabulary.nodes (hostname, ip_address, server_name, claster) "
+            "VALUES ($1, $2, $3, $4) RETURNING id",
+            hostname, ip_address, server_name, claster,
+            mode="val", func="create_node", retry=False,  # авто-PK → повтор задвоит строку
+        )
+        logger.info("vocabulary.nodes: создан узел id=%s (%s, %s, claster=%s)",
+                    node_id, server_name or hostname, ip_address, claster)
+        return int(node_id)
+
+    async def set_node_online(self, node_id: int, online: bool = True) -> None:
+        """Явно выставить is_online (после успешного деплоя WD + /health)."""
+        await self._query(
+            "UPDATE vocabulary.nodes SET is_online = $2, last_updated = now() WHERE id = $1",
+            node_id, online, mode="execute", func="set_node_online",
+        )
+
     # ----- программы -----
     async def find_programs_by_service(self, service_names: list[str]) -> list[asyncpg.Record]:
         """Записи programdata по списку имён service-файлов."""

@@ -2,6 +2,38 @@
 
 Все значимые изменения DeployManager. Формат — по разделам Added / Changed / Fixed.
 
+## 2026-07-08
+
+### Added
+- **«Настроить ноду» (turnkey ввод нового узла флота, фаза 1 — обычный узел)** —
+  `core/setup_node.py`. Кнопка GUI «🖥️ Настроить ноду» (зелёная, control-plane ряд) +
+  CLI `--action setup-node` / пункт меню `[8]`. Папку проекта не требует (БД+SSH, как infra).
+  Контур: форма (IP, root-pass, hostname, server_name) → гард дубля по IP →
+  **0** базовый bootstrap (одноразовый ПАРОЛЬНЫЙ коннект root → `provision-base.sh`;
+  выключает password-auth) → **1** диалог типа ноды (обычный | элемент кластера=заглушка
+  фазы 2) → **2** ролевой `provision-client.sh --tail-only` (haproxy_client) →
+  **3** verify (key-доступ + haproxy_client) → **4** whitelist (показ команды →
+  прогон `whitelist-ip.sh` по подтверждению) → **5** ПОЗДНЯЯ регистрация
+  `vocabulary.nodes` (claster=false, только по здоровому узлу) → **6** деплой Watchdog
+  (движок infra_deploy) → is_online=true. Повторный прогон безопасен (есть key-доступ →
+  фаза 0 пропускается). audit-запись. OS-bootstrap остаётся bash в Clusters — DM его гоняет.
+- `database/db.py`: `find_node_by_ip` (гард дубля), `create_node(...) RETURNING id`
+  (поздняя пропись, без ghost-строк), `set_node_online`.
+- `classes/ssh_client.py`: `bootstrap_run` (одноразовый парольный root + SFTP + стрим —
+  голый узел до раскладки ключа), `upload` (SFTP по ключу), `run_stream` (живой лог
+  длинных прогонов apt/сборки).
+- `core/infra_deploy.py`: `deploy_component_to_node` — деплой одного control-plane
+  компонента (WD) на ОДНУ ноду тем же движком, что полный инфра-деплой.
+- `settings/config.py`: `CLUSTERS_DIR` (репо bash-примитивов), `SETUP_CLIENT_PORTS`
+  (`22 6442 6543 8008`), `SETUP_BOOTSTRAP_TIMEOUT`.
+- Тесты `tests/test_setup_node.py` (гарды IP/дубля/нет-скриптов/нет-ключа; dry-run без
+  записей; заглушка кластерной ветки).
+
+### Note
+- Требует расщепления provision-скрипта в репозитории **Clusters**: `provision-base.sh`
+  (общая база, шаги 1–9) + `provision-client.sh` (client-хвост, флаг `--tail-only`).
+  Ветка «Элемент кластера» — заглушка (фаза 2: pg_basebackup/etcd-join/switchover).
+
 ## 2026-07-05 (2)
 
 ### Changed

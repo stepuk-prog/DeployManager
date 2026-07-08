@@ -81,6 +81,23 @@ DISPATCHER_DIR = str(Path(
     os.getenv("DISPATCHER_DIR", os.path.join(PROJECTS_DIR, "Dispatcher2.0"))
 ).expanduser())
 
+# Корень репозитория Clusters — источник bash-примитивов настройки узла
+# (scripts/provision-base.sh, provision-client.sh, whitelist-ip.sh), которые
+# «Настроить ноду» гоняет на новом узле. Отдельный ключ по той же причине, что
+# DISPATCHER_DIR. По умолчанию — PROJECTS_DIR/Clusters.
+CLUSTERS_DIR = str(Path(
+    os.getenv("CLUSTERS_DIR", os.path.join(PROJECTS_DIR, "Clusters"))
+).expanduser())
+
+# ----- Настройка новой ноды («Настроить ноду») -----
+# Порты, которые кластер открывает клиент-узлу (haproxy_client → лидер): entrypoint
+# 6442, leader-pgbouncer 6543, Patroni health 8008 (+ 22 SSH). НЕ etcd/5432 — клиенту
+# не нужны. whitelist-ip.sh прогоняется по всему флоту с этим набором.
+SETUP_CLIENT_PORTS = os.getenv("SETUP_CLIENT_PORTS", "22 6442 6543 8008")
+# Одноразовый парольный коннект root на голый узел — до provision-base (который
+# выключает PasswordAuthentication). Таймаут первичного bootstrap-прогона.
+SETUP_BOOTSTRAP_TIMEOUT = int(os.getenv("SETUP_BOOTSTRAP_TIMEOUT", "1800"))  # сек (apt+haproxy build)
+
 # ----- Provisioning на ноде (последовательность из README/DEPLOY, перенесённая в код) -----
 # venv → pip install -U pip → pip install -r requirements.txt → playwright install firefox
 PROVISION = os.getenv("PROVISION", "1").strip().lower() in ("1", "true", "yes", "on")
