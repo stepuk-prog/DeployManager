@@ -189,6 +189,15 @@ async def tv_flow(ctx: FlowContext, account: dict, on_saved=None) -> None:
 
 # ----------------------------- Binodex -----------------------------
 
+def _fmt_err(e) -> str:
+    """Читаемый текст ошибки. imaplib кидает с bytes-аргументом
+    (b'[AUTHENTICATIONFAILED] Invalid credentials') — декодируем, иначе в статусе «b'...'»."""
+    args = getattr(e, "args", None)
+    if args and isinstance(args[0], (bytes, bytearray)):
+        return args[0].decode("utf-8", "replace")
+    return str(e)
+
+
 async def _bust_stale_assets(page) -> None:
     """Обойти протухший Cloudflare-кэш binodex. Эдж отдаёт устаревший `/assets/app.js`
     (static-имя, cf-cache HIT ~сутки), который ссылается на уже удалённый локаль-чанк →
@@ -297,12 +306,25 @@ async def binodex_flow(ctx: FlowContext, account: dict, mode: str, on_saved=None
     session = None
     conn = None
     auto_ok = False
+
+    # 1. IMAP-логин ОТДЕЛЬНО: если почта не пускает (неверный/протухший app-пароль) — браузер НЕ
+    #    открываем (в браузере это не чинится), правится mail/mail_app_pass в telegram.telegram.
     try:
         wiz.busy(True)
         wiz.status("Подключаюсь к почте (IMAP)…")
         conn = await asyncio.to_thread(imap_code.imap_connect, mail, app_pass)
         baseline = set(await asyncio.to_thread(imap_code.privy_uids, conn))
+    except (Exception,) as error:
+        logger.warning("binodex_flow IMAP-логин (%s): %s", mail, error)
+        wiz.status(f"❌ Почта отвергла вход: {_fmt_err(error)}")
+        wiz.status("Проверь mail / mail_app_pass у аккаунта в telegram.telegram — нужен Gmail "
+                   "app-пароль (16 симв.) при включённой 2FA и доступе IMAP. Браузер не открывал.")
+        await wiz.choose([("Закрыть", "close", "no")])
+        wiz.close()
+        return
 
+    # 2. Браузер + Privy: тут при сбое окно ОСТАВЛЯЕМ открытым (оператор доделывает вручную).
+    try:
         wiz.status("Запуск браузера…")
         launch_opts = await _binodex_launch_options(ctx.db, use_proxy, wiz.status)
         session = await ctx.browser.launch(launch_opts, config.BINODEX_CONTEXT_OPTIONS)
@@ -324,7 +346,7 @@ async def binodex_flow(ctx: FlowContext, account: dict, mode: str, on_saved=None
         wiz.status("✅ Вход выполнен автоматически")
     except (Exception,) as error:
         logger.warning("binodex_flow auto: %s", error)
-        wiz.status(f"⚠️ Авто-флоу прервался: {error}")
+        wiz.status(f"⚠️ Авто-флоу прервался: {_fmt_err(error)}")
         wiz.status("Окно браузера оставлено открытым — доделайте вход вручную и нажмите «Сохранить».")
 
     # Очистка писем Privy при успешном авто-входе (одноразовые коды).

@@ -19,8 +19,10 @@ logger = init_logger(__name__)
 
 
 def imap_connect(mail: str, app_pass: str) -> imaplib.IMAP4_SSL:
+    # Gmail показывает app-пароль группами по 4 через пробел ("abcd efgh ijkl mnop"); в БД он мог
+    # сохраниться с пробелами → login их не жуёт. Чистим пробелы (и по краям) перед входом.
     conn = imaplib.IMAP4_SSL("imap.gmail.com", 993, timeout=20)
-    conn.login(mail, app_pass)
+    conn.login((mail or "").strip(), (app_pass or "").replace(" ", ""))
     conn.select("INBOX")
     return conn
 

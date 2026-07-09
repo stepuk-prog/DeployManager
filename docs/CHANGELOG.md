@@ -45,6 +45,12 @@
   прокликивается как прежде.
 
 ### Fixed
+- **Cookies/Binodex — понятная ошибка при отказе IMAP-логина** (`gui/flows.py`,
+  `apps/imap_code.py`). IMAP-коннект вынесен в отдельный try ДО запуска браузера: при отказе почты
+  (`[AUTHENTICATIONFAILED] Invalid credentials` — неверный/протухший Gmail app-пароль) статус теперь
+  говорит «проверь mail/mail_app_pass в telegram.telegram» и НЕ врёт про «окно оставлено открытым»
+  (браузер в этом случае не открывался). `_fmt_err` декодирует bytes-ошибку imaplib (было «b'...'»).
+  `imap_connect` защитно чистит пробелы в app-пароле (Gmail показывает его группами по 4).
 - **Cookies/Binodex — повторная модалка логина после входа** (`settings/config.py`).
   `BINODEX_TRADE` указывал на `https://app.binodex.app/trade` — ДРУГОЙ origin, чем страница
   логина (`binodex.app`). Privy держит сессию в `localStorage` (привязан к origin), поэтому на
