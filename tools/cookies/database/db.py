@@ -325,3 +325,21 @@ class Database:
                "SET cookies = EXCLUDED.cookies, updated_at = EXCLUDED.updated_at")
         return await self.execute_query(sql, user_id, storage_state, fetch_mode="execute",
                                         func="save_binodex_state", db="binodex")
+
+    async def get_active_proxies(self, scope: str = "binodex"):
+        """Активные :50100 (HTTP) прокси для BROWSER из settings.proxy_data (как в BinoOptions).
+        Cookies-инструмент всегда binodex-scope → фильтр по бан-полям *_binodex; ротация —
+        свежайший last_used_at_binodex в хвост. list[dict(ip,port,login,password)] | [] | False."""
+        sql = (
+            "SELECT ip, port, login, password FROM settings.proxy_data "
+            "WHERE is_active = true AND port = 50100 "
+            "AND long_ban_binodex = false "
+            "AND (is_banned_binodex = false OR banned_until_binodex < now()) "
+            "ORDER BY priority DESC, last_used_at_binodex ASC NULLS FIRST"
+        )
+        rows = await self.execute_query(sql, fetch_mode="all", func="get_active_proxies",
+                                        db="binodex")
+        if not rows:
+            return rows  # [] | False — прокинуть наверх без маскировки
+        return [{"ip": r["ip"], "port": r["port"], "login": r["login"],
+                 "password": r["password"]} for r in rows]

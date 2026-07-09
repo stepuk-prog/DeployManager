@@ -6,6 +6,7 @@ sync-Playwright нельзя крутить в asyncio → берём async_play
 Один движок Playwright на всё приложение (start/shutdown), отдельные browser+context+page
 на каждый флоу (launch → закрытие через BrowserSession.close()).
 """
+import asyncio
 from dataclasses import dataclass
 
 from playwright.async_api import Browser, BrowserContext, Page, async_playwright
@@ -28,6 +29,13 @@ class BrowserSession:
                 await obj.close()
             except (Exception,) as error:
                 logger.warning("Ошибка закрытия %s: %s", what, error)
+        # Гасим локальный прокси-релей, если поднимали его для binodex (direct → no-op по
+        # внутреннему гарду). Иначе daemon-поток релея пережил бы обслуживаемый браузер.
+        try:
+            from tools.cookies.settings.local_proxy import stop_local_proxy
+            await asyncio.to_thread(stop_local_proxy)
+        except (Exception,) as error:
+            logger.warning("stop_local_proxy при закрытии не удался: %s", error)
 
 
 class BrowserManager:

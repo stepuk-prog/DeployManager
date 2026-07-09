@@ -19,6 +19,15 @@
   `_nodes.sh` ГЕНЕРИТСЯ на лету из `vocabulary.nodes` (`_gen_nodes_sh`) — БД источник
   правды топологии, дубля IP-списка нет.
 
+- **Cookies/Binodex — прокси как в боевом BinoOptions** (`tools/cookies/`). Вкладка
+  Binodex собирает cookies через :50100-HTTP-прокси из `settings.proxy_data` (scope
+  binodex) с локальным релеем (Proxy-Authorization — Firefox не умеет socks5-auth).
+  Порт `settings/proxy.py` (`get_active_proxies`/`get_unused_proxy`) + вендоренный
+  `settings/local_proxy.py` (stdlib-релей). В визарде выбор «Войти через прокси» /
+  «Войти напрямую»; при пустом пуле/сбое релея — direct-фолбэк. Релей гасится в
+  `BrowserSession.close()` (+ явный стоп при неудачном launch). `database/db.py`:
+  `get_active_proxies(scope='binodex')`.
+
 ### Fixed
 - **«Настроить ноду»: «Отмена» на полях формы** (`core/setup_node.py`). Форма
   (IP/hostname/server_name/пароль) звала `ui.ask` без `cancelable=True` — только OK,

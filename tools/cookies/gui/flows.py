@@ -188,6 +188,37 @@ async def tv_flow(ctx: FlowContext, account: dict, on_saved=None) -> None:
 
 # ----------------------------- Binodex -----------------------------
 
+async def _binodex_launch_options(db, use_proxy: bool, status) -> dict:
+    """launch-опции binodex + :50100-HTTP-прокси из settings.proxy_data через локальный релей
+    (порт BinoOptions apps/browser_app._proxy_launch_options). Firefox не умеет socks5-auth →
+    релей инжектит Proxy-Authorization, браузеру отдаём его адрес без авторизации.
+    use_proxy=False или сбой подбора/релея → базовые опции (direct-фолбэк, как в BinoOptions)."""
+    base = config.BINODEX_LAUNCH_OPTIONS
+    if not use_proxy:
+        return base
+    from tools.cookies.settings import proxy as proxy_mod
+    from tools.cookies.settings.local_proxy import start_local_proxy
+    if not proxy_mod.proxy_list:
+        await proxy_mod.load_proxies_from_db(db)
+    p = proxy_mod.get_unused_proxy()
+    if not p:
+        status("⚠️ Нет активных :50100-прокси (settings.proxy_data) — иду напрямую")
+        return base
+    opts = dict(base)   # shallow: добавляем только верхний ключ 'proxy' (firefox_user_prefs не трогаем)
+    if p.login and p.password:
+        # start_local_proxy синхронный (socket.connect до ~3.3с) → в тред, чтобы не блокировать loop.
+        host, port = await asyncio.to_thread(start_local_proxy, p.ip, p.port, p.login, p.password)
+        if not host:
+            status(f"⚠️ Локальный релей для {p.ip} не поднялся — иду напрямую")
+            return base
+        opts["proxy"] = {"server": f"http://{host}:{port}"}
+        status(f"🛡️ Через прокси {p.ip}:{p.port} (релей {host}:{port})")
+    else:
+        opts["proxy"] = {"server": f"http://{p.ip}:{p.port}"}
+        status(f"🛡️ Через прокси {p.ip}:{p.port}")
+    return opts
+
+
 async def binodex_flow(ctx: FlowContext, account: dict, mode: str, on_saved=None) -> None:
     """Binodex (Privy email-OTP). mode: 'old' (Обновить старый, do_setup=False) /
     'new' (Добавить новый, do_setup=True). Браузер видимый: при сбое окно НЕ закрываем,
@@ -212,10 +243,13 @@ async def binodex_flow(ctx: FlowContext, account: dict, mode: str, on_saved=None
     wiz = WizardDialog(ctx.page, f"Binodex [{mode_label}]: {name}",
                        info_rows=_info_rows(ctx, name, mail, app_pass, pass_label="App-пароль"))
     wiz.open()
-    if await wiz.choose([("Войти и создать Cookies", "create", "ok"),
-                         ("Отмена", "cancel", "no")]) == "cancel":
+    entry = await wiz.choose([("Войти через прокси", "proxy", "ok"),
+                              ("Войти напрямую", "direct", "neutral"),
+                              ("Отмена", "cancel", "no")])
+    if entry == "cancel":
         wiz.close()
         return
+    use_proxy = (entry == "proxy")   # прокси из settings.proxy_data (как боевой binodex)
 
     if not mail or not app_pass:
         wiz.status("❌ Нет mail / mail_app_pass для аккаунта")
@@ -247,8 +281,8 @@ async def binodex_flow(ctx: FlowContext, account: dict, mode: str, on_saved=None
         baseline = set(await asyncio.to_thread(imap_code.privy_uids, conn))
 
         wiz.status("Запуск браузера…")
-        session = await ctx.browser.launch(config.BINODEX_LAUNCH_OPTIONS,
-                                           config.BINODEX_CONTEXT_OPTIONS)
+        launch_opts = await _binodex_launch_options(ctx.db, use_proxy, wiz.status)
+        session = await ctx.browser.launch(launch_opts, config.BINODEX_CONTEXT_OPTIONS)
         wiz.status("Отправляю e-mail на binodex…")
         await bnd.open_and_send_email(session.page, sel, mail)
 
@@ -281,6 +315,10 @@ async def binodex_flow(ctx: FlowContext, account: dict, mode: str, on_saved=None
         await asyncio.to_thread(imap_code.logout, conn)
 
     if session is None:
+        # launch мог упасть уже ПОСЛЕ подъёма релея (session.close() не вызовется) — гасим сами.
+        if use_proxy:
+            from tools.cookies.settings.local_proxy import stop_local_proxy
+            await asyncio.to_thread(stop_local_proxy)
         wiz.close()
         return
 
