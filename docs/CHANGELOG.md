@@ -29,6 +29,14 @@
   `get_active_proxies(scope='binodex')`.
 
 ### Fixed
+- **Cookies/Binodex — пустая страница в Playwright (протухший CDN-кэш)** (`gui/flows.py`
+  `_bust_stale_assets`). Cloudflare-эдж отдавал устаревший `/assets/app.js` (static-имя,
+  cf-cache HIT ~сутки), ссылающийся на уже удалённый локаль-чанк → тот 404-ил с MIME
+  text/plain → Firefox блокировал ES-модуль (NS_ERROR_CORRUPTED_CONTENT) → SPA не
+  бутстрапился (пустая страница, кнопки логина нет). Обычный браузер грузил из старого
+  кэша — отсюда «в браузере открывается, в Playwright нет». Фикс: `page.route` добавляет
+  cache-bust query к static-именованным entry (`app.js`/`app.css`) → CF MISS → origin
+  отдаёт свежий app.js с живыми чанками. Проверено: body-len 0→4171, login_open 0→1.
 - **«Настроить ноду»: «Отмена» на полях формы** (`core/setup_node.py`). Форма
   (IP/hostname/server_name/пароль) звала `ui.ask` без `cancelable=True` — только OK,
   чистого выхода не было. Теперь `cancelable=True`: «✖️ Отмена» → выход до bootstrap'а,

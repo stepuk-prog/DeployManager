@@ -6,6 +6,7 @@
 прочие сбои — в лог + статус визарда.
 """
 import asyncio
+import time
 from dataclasses import dataclass
 from typing import Callable
 
@@ -188,6 +189,28 @@ async def tv_flow(ctx: FlowContext, account: dict, on_saved=None) -> None:
 
 # ----------------------------- Binodex -----------------------------
 
+async def _bust_stale_assets(page) -> None:
+    """Обойти протухший Cloudflare-кэш binodex. Эдж отдаёт устаревший `/assets/app.js`
+    (static-имя, cf-cache HIT ~сутки), который ссылается на уже удалённый локаль-чанк →
+    тот 404-ит с MIME text/plain → Firefox блокирует ES-модуль (NS_ERROR_CORRUPTED_CONTENT)
+    → SPA не бутстрапится: пустая страница, кнопки логина нет. Обычный браузер грузит из
+    старого кэша, поэтому «в браузере открывается, в Playwright — нет».
+    Добавляем cache-bust query к static-именованным entry-файлам → CF MISS → origin отдаёт
+    свежий app.js с живыми чанками. Хэш-чанки иммутабельны (новый деплой = новый хэш) — не трогаем."""
+    cb = str(int(time.time()))
+
+    async def _cb(route):
+        url = route.request.url
+        sep = "&" if "?" in url else "?"
+        try:
+            await route.continue_(url=f"{url}{sep}_cb={cb}")
+        except (Exception,):   # старая версия Playwright без override url — не ломаем загрузку
+            await route.continue_()
+
+    await page.route("**/assets/app.js", _cb)
+    await page.route("**/assets/app.css", _cb)
+
+
 async def _binodex_launch_options(db, use_proxy: bool, status) -> dict:
     """launch-опции binodex + :50100-HTTP-прокси из settings.proxy_data через локальный релей
     (порт BinoOptions apps/browser_app._proxy_launch_options). Firefox не умеет socks5-auth →
@@ -283,6 +306,7 @@ async def binodex_flow(ctx: FlowContext, account: dict, mode: str, on_saved=None
         wiz.status("Запуск браузера…")
         launch_opts = await _binodex_launch_options(ctx.db, use_proxy, wiz.status)
         session = await ctx.browser.launch(launch_opts, config.BINODEX_CONTEXT_OPTIONS)
+        await _bust_stale_assets(session.page)   # обойти протухший CDN-кэш app.js (иначе пустая страница)
         wiz.status("Отправляю e-mail на binodex…")
         await bnd.open_and_send_email(session.page, sel, mail)
 
