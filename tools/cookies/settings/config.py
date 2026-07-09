@@ -39,8 +39,12 @@ BINODEX_VH = int(os.getenv("BINODEX_VH", "800"))
 # ----- URL -----
 OTC_URL = "https://pocketoption.com/ru/cabinet/quick-high-low/"
 TV_URL = "https://ru.tradingview.com/"
+# Логин и /trade — ОДИН origin (binodex.app). Privy держит сессию в localStorage, а он
+# привязан к origin: если finish_login уходил на поддомен app.binodex.app, сессия там не
+# видна → Privy снова показывает модалку логина. binodex.app/trade — то, что грузят и боты
+# (binodex_settings.trade_url), т.е. канон; storage_state снимаем с этого origin.
 BINODEX_LANDING = "https://binodex.app/"
-BINODEX_TRADE = "https://app.binodex.app/trade"
+BINODEX_TRADE = "https://binodex.app/trade"
 
 # ----- Playwright (Firefox) — OTC / TradingView (порт browser_setting.py) -----
 _OTC_UA = "Mozilla/5.0 (X11; Linux x86_64; rv:118.0) Gecko/20100101 Firefox/118.0"

@@ -29,6 +29,12 @@
   `get_active_proxies(scope='binodex')`.
 
 ### Fixed
+- **Cookies/Binodex — повторная модалка логина после входа** (`settings/config.py`).
+  `BINODEX_TRADE` указывал на `https://app.binodex.app/trade` — ДРУГОЙ origin, чем страница
+  логина (`binodex.app`). Privy держит сессию в `localStorage` (привязан к origin), поэтому на
+  поддомене `app.binodex.app` сессии нет → Privy снова показывает «Log in or sign up». Исправлено
+  на `https://binodex.app/trade` (тот же origin, что логин; и ровно то, что грузят боты —
+  `binodex_settings.trade_url`). storage_state теперь снимается с правильного origin.
 - **Cookies/Binodex — пустая страница в Playwright (протухший CDN-кэш)** (`gui/flows.py`
   `_bust_stale_assets`). Cloudflare-эдж отдавал устаревший `/assets/app.js` (static-имя,
   cf-cache HIT ~сутки), ссылающийся на уже удалённый локаль-чанк → тот 404-ил с MIME
