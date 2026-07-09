@@ -36,13 +36,14 @@ _REMOTE_CLIENT = "/root/provision-client.sh"
 
 
 def _scripts() -> tuple[str, str, str] | None:
-    """Пути к bash-примитивам в CLUSTERS_DIR/scripts. None — если чего-то нет."""
-    d = os.path.join(config.CLUSTERS_DIR, "scripts")
-    base, client, wl = (os.path.join(d, f) for f in
+    """Пути к ВЕНДОРЕННЫМ bash-примитивам в assets/fleet_scripts (DM самодостаточен —
+    не зависит от наличия репозитория Clusters). None — если чего-то нет."""
+    from core.scripts import BUNDLED_DIR
+    base, client, wl = (os.path.join(BUNDLED_DIR, f) for f in
                         ("provision-base.sh", "provision-client.sh", "whitelist-ip.sh"))
     for p in (base, client, wl):
         if not os.path.isfile(p):
-            print(f"🛑 Нет скрипта: {p} (проверь CLUSTERS_DIR={config.CLUSTERS_DIR})")
+            print(f"🛑 Нет вендоренного скрипта: {p}")
             return None
     return base, client, wl
 

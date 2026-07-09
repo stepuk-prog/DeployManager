@@ -81,10 +81,10 @@ DISPATCHER_DIR = str(Path(
     os.getenv("DISPATCHER_DIR", os.path.join(PROJECTS_DIR, "Dispatcher2.0"))
 ).expanduser())
 
-# Корень репозитория Clusters — источник bash-примитивов настройки узла
-# (scripts/provision-base.sh, provision-client.sh, whitelist-ip.sh), которые
-# «Настроить ноду» гоняет на новом узле. Отдельный ключ по той же причине, что
-# DISPATCHER_DIR. По умолчанию — PROJECTS_DIR/Clusters.
+# Корень репозитория Clusters — используется ТОЛЬКО как база по умолчанию для REPORTER_DIR
+# (reporter — целый проект в Clusters, его деплоим по пути, не вендорим). Bash-примитивы
+# настройки узла (provision-base/client, whitelist-ip) ВЕНДОРЕНЫ в assets/fleet_scripts —
+# DM самодостаточен, наличие Clusters-чекаута для «Настроить ноду» больше НЕ требуется.
 CLUSTERS_DIR = str(Path(
     os.getenv("CLUSTERS_DIR", os.path.join(PROJECTS_DIR, "Clusters"))
 ).expanduser())

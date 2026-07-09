@@ -45,6 +45,12 @@
   `get_active_proxies(scope='binodex')`.
 
 ### Changed
+- **«Настроить ноду» самодостаточна — provision-скрипты вендорены** (`core/setup_node.py`,
+  `assets/fleet_scripts/`). `_scripts()` читал `provision-base.sh`/`provision-client.sh`/
+  `whitelist-ip.sh` из `CLUSTERS_DIR/scripts` — теперь из вендоренных `assets/fleet_scripts`
+  (байт-в-байт копии Clusters). DM больше НЕ требует чекаута Clusters для настройки узла.
+  `CLUSTERS_DIR` остался только базой по умолчанию для `REPORTER_DIR` (reporter — целый проект,
+  деплоим по пути). При обновлении provision-скриптов в Clusters — пере-вендорить в assets.
 - **Cookies/Binodex «Добавить новый» — критерий смягчён до `mail`+`mail_app_pass`**
   (`database/db.py` `telegram_new_accounts`). Убрано требование `api_id`/`api_hash` (Telegram-API
   юзербота, к binodex-логину не относятся) — теперь «свободным» считается любой аккаунт с рабочей

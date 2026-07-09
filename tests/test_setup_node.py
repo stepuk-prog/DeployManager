@@ -59,7 +59,9 @@ class FakeSsh:
 
 
 def _scaffold(tmp_path, monkeypatch, *, scripts=True, pubkey=True):
-    """Разложить tmp CLUSTERS_DIR/scripts/* и SSH_KEY(+.pub); подменить config."""
+    """Разложить tmp bundled-scripts/* и SSH_KEY(+.pub); подменить BUNDLED_DIR (скрипты
+    ВЕНДОРЕНЫ в assets/fleet_scripts) + config. scripts=False → пустой dir (гард «нет скрипта»)."""
+    from core import scripts as scripts_mod
     sdir = tmp_path / "scripts"
     sdir.mkdir()
     if scripts:
@@ -69,7 +71,7 @@ def _scaffold(tmp_path, monkeypatch, *, scripts=True, pubkey=True):
     key.write_text("PRIVATE")
     if pubkey:
         (tmp_path / "id_nodes.pub").write_text("ssh-ed25519 AAAA vova@ws\n")
-    monkeypatch.setattr(config, "CLUSTERS_DIR", str(tmp_path))
+    monkeypatch.setattr(scripts_mod, "BUNDLED_DIR", str(sdir))
     monkeypatch.setattr(config, "SSH_KEY", str(key))
 
 
