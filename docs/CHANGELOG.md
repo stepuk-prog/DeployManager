@@ -56,6 +56,12 @@
   `get_active_proxies(scope='binodex')`.
 
 ### Changed
+- **Пути к исходникам компонентов — конфигурируемы через env** (`core/infra_deploy.py`).
+  Локальный исходник каждого control-plane компонента резолвится из env `<KEY>_DIR`
+  (`GD_DIR`/`WD_DIR`/`CD_DIR`/`DISPATCHERCTL_DIR`) + `COMMON_DIR`, с фолбэком на
+  `DISPATCHER_DIR/<project_subdir>`. Раньше все жёстко = подпапки `DISPATCHER_DIR` → теперь DM
+  настраивается на любую раскладку (компоненты могут лежать где угодно). `InfraComponent.source_dir`
+  (+ `env_base` от него) / `_common_dir()`. Задокументировано в `.env.example`.
 - **«Настроить ноду» самодостаточна — provision-скрипты вендорены** (`core/setup_node.py`,
   `assets/fleet_scripts/`). `_scripts()` читал `provision-base.sh`/`provision-client.sh`/
   `whitelist-ip.sh` из `CLUSTERS_DIR/scripts` — теперь из вендоренных `assets/fleet_scripts`

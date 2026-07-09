@@ -59,11 +59,25 @@ class InfraComponent:
     restart: bool = True
 
     @property
+    def source_dir(self) -> str:
+        # Локальный исходник компонента. Env-оверрайд <KEY>_DIR (GD_DIR / WD_DIR / CD_DIR /
+        # DISPATCHERCTL_DIR), иначе DISPATCHER_DIR/<project_subdir>. Позволяет настроить DM
+        # на любой раскладке (компоненты могут лежать где угодно, не только в Dispatcher2.0).
+        env_key = f"{self.key.upper()}_DIR"
+        default = os.path.join(config.DISPATCHER_DIR, self.project_subdir)
+        return os.path.expanduser(os.getenv(env_key, default))
+
+    @property
     def env_base(self) -> str:
         # Деплой-база живёт В САМОМ ПРОЕКТЕ рядом с .env.example (Dispatcher
         # самодостаточен: код+шаблоны+секрет-база в одном репо), DM только ЧИТАЕТ:
-        # <DISPATCHER_DIR>/<project_subdir>/.env.deploy (gitignored).
-        return os.path.join(config.DISPATCHER_DIR, self.project_subdir, ".env.deploy")
+        # <source_dir>/.env.deploy (gitignored).
+        return os.path.join(self.source_dir, ".env.deploy")
+
+
+def _common_dir() -> str:
+    """Локальный исходник /opt/common. Env-оверрайд COMMON_DIR, иначе DISPATCHER_DIR/common."""
+    return os.path.expanduser(os.getenv("COMMON_DIR", os.path.join(config.DISPATCHER_DIR, COMMON_SUBDIR)))
 
 
 # src_relpath юнита — путь ВНУТРИ remote_folder после rsync (структура сохраняется):
@@ -444,8 +458,8 @@ async def run_infra(db: Database, ssh: SshClient, *, component: str | None = Non
         return
 
     # 5) ветки, работающие с локальным кодом
-    project_dir = os.path.join(config.DISPATCHER_DIR, comp.project_subdir)
-    common_dir = os.path.join(config.DISPATCHER_DIR, COMMON_SUBDIR)
+    project_dir = comp.source_dir
+    common_dir = _common_dir()
     if not os.path.isdir(project_dir):
         print(f"🛑 Нет каталога проекта: {project_dir}")
         return
@@ -517,8 +531,8 @@ async def deploy_component_to_node(ssh: SshClient, node, *, component: str = "WD
     что у полного инфра-деплоя (`_deploy_one`). Для turnkey «Настроить ноду». `node` —
     Record из vocabulary.nodes (нужны ip_address/server_name/hostname/claster)."""
     comp = INFRA_COMPONENTS[component]
-    project_dir = os.path.join(config.DISPATCHER_DIR, comp.project_subdir)
-    common_dir = os.path.join(config.DISPATCHER_DIR, COMMON_SUBDIR)
+    project_dir = comp.source_dir
+    common_dir = _common_dir()
     if not os.path.isdir(project_dir):
         return DeployResult(_node_name(node), node["ip_address"], False, "no-project",
                             f"нет каталога {project_dir}")
