@@ -5,6 +5,17 @@
 ## 2026-07-09
 
 ### Added
+- **«Настроить ноду» ФАЗА 2 — член кластера (пошаговый визард)** (`core/setup_cluster_member.py`).
+  Замена мёртвой cluster-ноды (Patroni/etcd) — опасная процедура (`node_replacement.md`: swap
+  членства etcd с окном quorum 2/2, basebackup, чистка мёртвого IP на живых нодах). Поэтому НЕ
+  «один клик», а **пошаговый визард**: каждый шаг = заголовок + подробное пояснение (что/зачем/риск)
+  + точные команды → `[Выполнить / Пропустить / Отмена]`. 14 шагов: 0 бэкап · 1a локаль / 1b UFW ·
+  2a-2e install (PG16/etcd/Patroni/HAProxy-из-исходников/users) · 3 конфиги (v1 вручную, scp из
+  `CLUSTER_CONFIG_DIR`) · **4 ⚠️ etcd-swap** · 5 старт+basebackup · **6 ⚠️ чистка IP (swap-node-ip.sh)** ·
+  7 HAProxy клиентов · 8 регистрация+WD+Reporter. Опасные шаги (4/6, danger) — усиленное
+  подтверждение. Автоматизирована безопасная подготовка; quorum-критичное — под явным контролем
+  оператора. Хук из формы «Настроить ноду» (тип «Элемент кластера»). Конфиг `CLUSTER_CONFIG_DIR`.
+  Real-прогон — на живой узел (dry-run печатает план). *Follow-up: авто-копирование конфигов (шаг 3).*
 - **Reporter — кнопка деплоя на cluster-ноды** (`core/reporter.py`, кнопка «📊 Reporter» в
   control-plane ряду + CLI `--action reporter`). Reporter — Patroni `on_role_change`→primary
   callback (шлёт статус кластера в Telegram), НЕ dispatcher-компонент и НЕ systemd-служба.

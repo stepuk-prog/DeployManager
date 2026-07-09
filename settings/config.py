@@ -101,6 +101,13 @@ REPORTER_CALLBACK = "/usr/local/bin/leader_callback.sh"                   # Patr
 REPORTER_LOG = "/var/log/patroni_role_change.log"
 PATRONI_YML = os.getenv("PATRONI_YML", "/etc/patroni/patroni.yml")       # для verify callback
 
+# Источник cluster-конфигов (patroni/etcd/haproxy/pgbouncer/pg_hba/units) для «Настроить ноду»
+# фаза 2 (член кластера). Конкретные per-node файлы (etcd-clusterN.yml и т.д.) живут в Clusters,
+# деплоим по пути (как REPORTER_DIR). По умолчанию — CLUSTERS_DIR/ConfigFiles/cluster-node.
+CLUSTER_CONFIG_DIR = str(Path(
+    os.getenv("CLUSTER_CONFIG_DIR", os.path.join(CLUSTERS_DIR, "ConfigFiles", "cluster-node"))
+).expanduser())
+
 # ----- Настройка новой ноды («Настроить ноду») -----
 # Порты, которые кластер открывает клиент-узлу (haproxy_client → лидер): entrypoint
 # 6442, leader-pgbouncer 6543, Patroni health 8008 (+ 22 SSH). НЕ etcd/5432 — клиенту

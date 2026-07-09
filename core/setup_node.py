@@ -146,8 +146,9 @@ async def run_setup_node(db: Database, ssh: SshClient, *, dry_run: bool = False)
         print("Отмена (база настроена).")
         return
     if idx == 1:
-        print("⛧ Ветка «Элемент кластера» ещё в разработке (фаза 2). База настроена; член "
-              "кластера пока вводится ранбуком docs/node_replacement.md.")
+        # ФАЗА 2: член кластера (Patroni/etcd) — пошаговый визард (база уже настроена выше).
+        from core.setup_cluster_member import run_setup_cluster_member
+        await run_setup_cluster_member(db, ssh, new_ip=ip, hostname=hostname, dry_run=dry_run)
         return
 
     # ── ОБЫЧНЫЙ УЗЕЛ ──

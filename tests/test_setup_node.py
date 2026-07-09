@@ -45,6 +45,16 @@ class FakeDb:
     async def set_node_online(self, node_id, online=True):
         self.calls.append(("online", node_id, online))
 
+    async def get_online_nodes(self):   # для визарда фазы-2 (член кластера)
+        return [
+            {"id": 1, "hostname": "cluster1", "server_name": "cluster1",
+             "ip_address": "190.2.151.183", "claster": True},
+            {"id": 2, "hostname": "cluster2", "server_name": "cluster2",
+             "ip_address": "2.58.67.41", "claster": True},
+            {"id": 3, "hostname": "n1", "server_name": "NODE-1",
+             "ip_address": "2.58.66.56", "claster": False},
+        ]
+
 
 class FakeSsh:
     """Любой вызов ssh в dry-run — ошибка теста (не должно быть)."""
@@ -139,9 +149,11 @@ def test_cancel_on_form_aborts(tmp_path, monkeypatch):
     assert db.calls == []
 
 
-def test_cluster_branch_is_stub(tmp_path, monkeypatch):
+def test_cluster_branch_enters_wizard(tmp_path, monkeypatch):
     _scaffold(tmp_path, monkeypatch)
     db = FakeDb(dup=None)
-    # select_idx=1 → «Элемент кластера» = заглушка: не регистрируем, не деплоим
-    _run(db, FakeSsh(), FakeUi(["1.2.3.4", "n-node8", "N8", "pw"], select_idx=1), monkeypatch)
+    # select_idx=1 → «Элемент кластера» → визард фазы-2; confirm_val=False → отмена на подтверждении
+    # топологии. Регистрация (create_node) в визарде — ручной шаг 8, авто НЕ вызывается.
+    _run(db, FakeSsh(), FakeUi(["1.2.3.4", "n-node8", "N8", "pw"], select_idx=1, confirm_val=False),
+         monkeypatch)
     assert not any(c[0] == "create" for c in db.calls)
