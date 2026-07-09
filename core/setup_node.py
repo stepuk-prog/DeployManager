@@ -79,8 +79,16 @@ async def run_setup_node(db: Database, ssh: SshClient, *, dry_run: bool = False)
     if vova_pubkey is None:
         return
 
-    # ── форма ──
-    ip = ((await ui.ask("IP нового узла")) or "").strip()
+    # ── форма (у каждого поля есть «Отмена» → выход из мастера; ничего ещё не тронуто) ──
+    async def _field(prompt: str, default: str = "") -> str | None:
+        """Строковое поле формы с «Отмена». None = оператор отменил мастер (выше — return)."""
+        v = await ui.ask(prompt, default, cancelable=True)
+        return None if v is None else v.strip()
+
+    ip = await _field("IP нового узла")
+    if ip is None:
+        print("Отмена.")
+        return
     try:
         ipaddress.ip_address(ip)
     except ValueError:
@@ -91,13 +99,21 @@ async def run_setup_node(db: Database, ssh: SshClient, *, dry_run: bool = False)
         print(f"🛑 Узел с IP {ip} уже в vocabulary.nodes "
               f"(id={dup['id']}, {dup['server_name'] or dup['hostname']}). Отмена.")
         return
-    hostname = ((await ui.ask("Системный hostname (напр. n-node8)")) or "").strip()
+    hostname = await _field("Системный hostname (напр. n-node8)")
+    if hostname is None:
+        print("Отмена.")
+        return
     if not hostname:
         print("🛑 hostname обязателен.")
         return
-    server_name = ((await ui.ask("Имя ноды в системе (server_name — дисплей в отчётах)",
-                                 hostname)) or "").strip()
-    password = (await ui.ask("Пароль root нового узла (только первый коннект)")) or ""
+    server_name = await _field("Имя ноды в системе (server_name — дисплей в отчётах)", hostname)
+    if server_name is None:
+        print("Отмена.")
+        return
+    password = await ui.ask("Пароль root нового узла (только первый коннект)", cancelable=True)
+    if password is None:
+        print("Отмена.")
+        return
     if not dry_run and not password:
         print("🛑 Нужен пароль root для первого (парольного) коннекта.")
         return

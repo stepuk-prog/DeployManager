@@ -129,6 +129,14 @@ def test_dry_run_no_writes(tmp_path, monkeypatch):
     assert audit_rec.get("type") == "client"
 
 
+def test_cancel_on_form_aborts(tmp_path, monkeypatch):
+    _scaffold(tmp_path, monkeypatch)
+    db = FakeDb(dup=None)
+    # None из ask = нажата «Отмена» на поле IP → мастер выходит, БД не трогаем
+    _run(db, FakeSsh(), FakeUi([None]), monkeypatch)
+    assert db.calls == []
+
+
 def test_cluster_branch_is_stub(tmp_path, monkeypatch):
     _scaffold(tmp_path, monkeypatch)
     db = FakeDb(dup=None)
