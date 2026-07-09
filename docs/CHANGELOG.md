@@ -36,6 +36,10 @@
   `get_active_proxies(scope='binodex')`.
 
 ### Changed
+- **Cookies/Binodex «Добавить новый» — критерий смягчён до `mail`+`mail_app_pass`**
+  (`database/db.py` `telegram_new_accounts`). Убрано требование `api_id`/`api_hash` (Telegram-API
+  юзербота, к binodex-логину не относятся) — теперь «свободным» считается любой аккаунт с рабочей
+  почтой без сохранённого binodex-storage_state. (Свободных стало 32 vs. меньше при api-фильтре.)
 - **Cookies/Binodex — `setup_site` больше НЕ трогает тему** (`apps/binodex.py`). Убран блок
   выбора/переключения темы (по указанию — тему оставляем как есть); масштаб свечи/графика
   прокликивается как прежде.

@@ -275,16 +275,15 @@ class Database:
             fetch_mode="all", func="get_program_names", db="program")
 
     async def telegram_new_accounts(self):
-        """Аккаунты для режима «Добавить новый»: заполнены mail, mail_app_pass, api_id,
-        api_hash. Отсечение уже существующих (есть строка в binodex_cookies) — в Python
-        (кросс-БД), см. gui/flows.py. list[Record(id_telegram, name, mail, mail_app_pass)]."""
+        """Аккаунты для режима «Добавить новый»: заполнены mail + mail_app_pass (для IMAP —
+        Privy шлёт код входа на почту). api_id/api_hash (Telegram-API юзербота) к binodex-логину
+        отношения не имеют — из критерия убраны. Отсечение уже существующих (есть строка в
+        binodex_cookies) — в Python (кросс-БД). list[Record(id_telegram, name, mail, mail_app_pass)]."""
         sql = """
             SELECT id_telegram, name, mail, mail_app_pass
             FROM telegram.telegram
             WHERE mail IS NOT NULL AND mail <> ''
               AND mail_app_pass IS NOT NULL AND mail_app_pass <> ''
-              AND api_id IS NOT NULL
-              AND api_hash IS NOT NULL AND api_hash <> ''
             ORDER BY name
         """
         return await self.execute_query(sql, fetch_mode="all",

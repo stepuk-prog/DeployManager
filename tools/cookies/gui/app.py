@@ -159,8 +159,8 @@ async def build_screen(page: ft.Page, on_back):
     async def load_binodex_new(_=None):
         bnd_list.controls.clear()
         bnd_list.controls.append(ft.Text("Binodex — Добавить новый", weight=ft.FontWeight.BOLD))
-        print("Binodex «Добавить новый»: критерий — в telegram.telegram заполнены mail, "
-              "mail_app_pass (16-симв. Gmail app-password), api_id и api_hash И ещё нет строки в "
+        print("Binodex «Добавить новый»: критерий — в telegram.telegram заполнены mail и "
+              "mail_app_pass (16-симв. Gmail app-password) И ещё нет строки в "
               "binodex.cookies.binodex_cookies. Чтобы аккаунт появился в списке, заполните эти поля.")
         tn = await db.telegram_new_accounts()
         existing = await db.binodex_existing_user_ids()
