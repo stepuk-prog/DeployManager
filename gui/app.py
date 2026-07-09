@@ -8,6 +8,7 @@ import flet as ft
 
 import cli
 import tools
+from core import scripts as scripts_mod
 from classes.manifest import local_version
 from core import ui
 from gui.backend import FletUi
@@ -65,7 +66,8 @@ async def main(page: ft.Page):
     async def run_branch(action: str, component: str | None = None):
         # infra-деплой (GD/WD/CD/DispatcherCtl) и суб-инструменты (tools: сессии и пр.) папку
         # проекта НЕ требуют — работают с БД напрямую. Прочие ветки требуют выбранный проект.
-        if action not in ("infra", "setup-node") and action not in tools.TOOL_KEYS and not state["path"]:
+        if (action not in ("infra", "setup-node") and action not in tools.TOOL_KEYS
+                and action not in scripts_mod.SCRIPT_KEYS and not state["path"]):
             sink.write("Сначала выберите папку проекта (кнопка «Обзор…»).\n")
             return
         set_busy(True)
@@ -109,6 +111,17 @@ async def main(page: ft.Page):
             content=ft.Text(label, color=ft.Colors.WHITE),
             bgcolor=ft.Colors.GREEN_700,
             on_click=lambda e: page.run_task(run_branch, "setup-node"))
+        branch_buttons.append(btn)
+        return btn
+
+    def script_btn(spec: dict) -> ft.Control:
+        # операционный скрипт флота из реестра scripts.SCRIPTS (БД+SSH, проект не нужен).
+        # action = ключ скрипта (как control-plane); danger-скрипты — янтарным.
+        btn = ft.Button(
+            content=ft.Text(f"{spec['icon']} {spec['label']}", color=ft.Colors.WHITE),
+            bgcolor=getattr(ft.Colors, spec["color"], ft.Colors.TEAL_600),
+            tooltip=spec.get("desc"),
+            on_click=lambda e, k=spec["key"]: page.run_task(run_branch, k))
         branch_buttons.append(btn)
         return btn
 
@@ -174,6 +187,9 @@ async def main(page: ft.Page):
             infra_btn("🌐 DispatcherCtl", "DispatcherCtl"),
             node_btn("🖥️ Настроить ноду"),
         ], wrap=True),
+        ft.Row([ft.Text("Скрипты флота (без выбора проекта):", italic=True,
+                        color=ft.Colors.CYAN_300)]),
+        ft.Row([script_btn(s) for s in scripts_mod.SCRIPTS], wrap=True),
         ft.Row([ft.Text("Инструменты (без выбора проекта):", italic=True,
                         color=ft.Colors.TEAL_300)]),
         ft.Row([tool_btn(t) for t in tools.TOOLS], wrap=True),

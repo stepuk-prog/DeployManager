@@ -540,7 +540,10 @@ async def run(args=None):
     await db.connect()
     ssh = SshClient()
     try:
-        action = _ACTION_MAP.get(getattr(args, "action", None)) if args else None
+        from core import scripts as scripts_mod
+        raw_action = getattr(args, "action", None) if args else None
+        # script-ключи не в _ACTION_MAP — сохраняем их как есть (иначе уйдём в промпт)
+        action = _ACTION_MAP.get(raw_action) or (raw_action if raw_action in scripts_mod.SCRIPT_KEYS else None)
         action = action or await _ask(
             "\nРежим:\n"
             "  [1] деплой нового проекта (с нуля на чистые серверы)\n"
@@ -582,6 +585,9 @@ async def run(args=None):
                       f"Запусти через GUI: .venv/bin/python gui_main.py")
                 return
             await tools.run_tool(action, db)
+            return
+        if action in scripts_mod.SCRIPT_KEYS:   # операционные скрипты флота (БД+SSH, проект не нужен)
+            await scripts_mod.run_script(action, db, ssh, dry_run=dry_run)
             return
 
         # ── все прочие ветки требуют папку проекта ──

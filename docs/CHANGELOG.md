@@ -2,6 +2,29 @@
 
 Все значимые изменения DeployManager. Формат — по разделам Added / Changed / Fixed.
 
+## 2026-07-09
+
+### Added
+- **Операционные скрипты флота — кнопками** (`core/scripts.py`, ряд «Скрипты флота»
+  в GUI + CLI `--action <key>`). Декларативный реестр `SCRIPTS` (новый скрипт = одна
+  запись + файл в `assets/`, без правок cli/gui — как `tools.TOOLS`). Скрипты:
+  `pw_sweep` (Playwright-свип, scope=node), `audit_cluster` (read-only свод здоровья),
+  `whitelist_ip` (fail2ban+UFW по IP), `swap_node_ip` (смена IP узла в конфигах,
+  danger). Два scope: **local** — скрипт сам обходит флот, гоняем во временной папке;
+  **node** — пикер узла (или «все клиентские») → upload → run под root. Apply-скрипты:
+  dry-run → подтверждение → `--apply`. Аргументы декларативно (позиц./флаг/булев,
+  валидация IP). audit-запись на каждый запуск.
+- **Самодостаточность (по требованию Vlad — DM не зависит от чужих репозиториев):**
+  скрипты ВЕНДОРЕНЫ в `assets/fleet_scripts/` (не ссылки на Clusters), а реестр узлов
+  `_nodes.sh` ГЕНЕРИТСЯ на лету из `vocabulary.nodes` (`_gen_nodes_sh`) — БД источник
+  правды топологии, дубля IP-списка нет.
+
+### Fixed
+- **«Настроить ноду»: «Отмена» на полях формы** (`core/setup_node.py`). Форма
+  (IP/hostname/server_name/пароль) звала `ui.ask` без `cancelable=True` — только OK,
+  чистого выхода не было. Теперь `cancelable=True`: «✖️ Отмена» → выход до bootstrap'а,
+  ничего не тронув.
+
 ## 2026-07-08
 
 ### Added
