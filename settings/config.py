@@ -89,6 +89,18 @@ CLUSTERS_DIR = str(Path(
     os.getenv("CLUSTERS_DIR", os.path.join(PROJECTS_DIR, "Clusters"))
 ).expanduser())
 
+# Источник Reporter'а (Patroni on_role_change → Telegram-статус кластера). Живёт в Clusters
+# как обычный проект (не Dispatcher2.0), поэтому отдельный путь. По умолчанию —
+# CLUSTERS_DIR/programs/reporter. Деплой — только на cluster-ноды (кнопка «Reporter»).
+REPORTER_DIR = str(Path(
+    os.getenv("REPORTER_DIR", os.path.join(CLUSTERS_DIR, "programs", "reporter"))
+).expanduser())
+REPORTER_REMOTE = os.getenv("REPORTER_REMOTE", "/opt/Reporter")          # каталог на ноде
+REPORTER_OWNER = os.getenv("REPORTER_OWNER", "postgres:patroni_group")   # владелец (Patroni)
+REPORTER_CALLBACK = "/usr/local/bin/leader_callback.sh"                   # Patroni-callback
+REPORTER_LOG = "/var/log/patroni_role_change.log"
+PATRONI_YML = os.getenv("PATRONI_YML", "/etc/patroni/patroni.yml")       # для verify callback
+
 # ----- Настройка новой ноды («Настроить ноду») -----
 # Порты, которые кластер открывает клиент-узлу (haproxy_client → лидер): entrypoint
 # 6442, leader-pgbouncer 6543, Patroni health 8008 (+ 22 SSH). НЕ etcd/5432 — клиенту

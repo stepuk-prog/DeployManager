@@ -5,6 +5,15 @@
 ## 2026-07-09
 
 ### Added
+- **Reporter — кнопка деплоя на cluster-ноды** (`core/reporter.py`, кнопка «📊 Reporter» в
+  control-plane ряду + CLI `--action reporter`). Reporter — Patroni `on_role_change`→primary
+  callback (шлёт статус кластера в Telegram), НЕ dispatcher-компонент и НЕ systemd-служба.
+  Переиспользует стандартные примитивы (`rsync_project`+`provision`), но со спецификой:
+  источник `REPORTER_DIR` (дефолт `CLUSTERS_DIR/programs/reporter`), владелец
+  `postgres:patroni_group`, вместо юнита — `leader_callback.sh`→`/usr/local/bin` + лог-файл,
+  `patroni.yml` только ПРОВЕРЯЕТСЯ (не правим — дисраптивно). Только cluster-ноды (claster=true).
+  Флоу: mkdir+chown vova → rsync → provision(venv+pip) → chown postgres:patroni_group 775 →
+  callback+лог → verify patroni.yml. Конфиг: `REPORTER_DIR/REMOTE/OWNER/CALLBACK/LOG`, `PATRONI_YML`.
 - **Cookies/Binodex — три категории кнопок** (`gui/app.py`, `database/db.py`). Вместо одного
   «Обновить старый» (был только Options) — **Options** / **OTC Screen** / **Crypta Screen**,
   каждая со своим источником аккаунтов: `settings.option_setting.cookies_pocket` (6),

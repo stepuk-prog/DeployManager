@@ -66,7 +66,7 @@ async def main(page: ft.Page):
     async def run_branch(action: str, component: str | None = None):
         # infra-деплой (GD/WD/CD/DispatcherCtl) и суб-инструменты (tools: сессии и пр.) папку
         # проекта НЕ требуют — работают с БД напрямую. Прочие ветки требуют выбранный проект.
-        if (action not in ("infra", "setup-node") and action not in tools.TOOL_KEYS
+        if (action not in ("infra", "setup-node", "reporter") and action not in tools.TOOL_KEYS
                 and action not in scripts_mod.SCRIPT_KEYS and not state["path"]):
             sink.write("Сначала выберите папку проекта (кнопка «Обзор…»).\n")
             return
@@ -111,6 +111,16 @@ async def main(page: ft.Page):
             content=ft.Text(label, color=ft.Colors.WHITE),
             bgcolor=ft.Colors.GREEN_700,
             on_click=lambda e: page.run_task(run_branch, "setup-node"))
+        branch_buttons.append(btn)
+        return btn
+
+    def reporter_btn(label: str) -> ft.Control:
+        # Reporter — Patroni-callback на cluster-нодах (owner postgres). БД+SSH, проект не нужен.
+        # Фиолетовый — отделить от dispatcher-компонентов (GD/WD/CD — индиго).
+        btn = ft.Button(
+            content=ft.Text(label, color=ft.Colors.WHITE),
+            bgcolor=ft.Colors.DEEP_PURPLE_600,
+            on_click=lambda e: page.run_task(run_branch, "reporter"))
         branch_buttons.append(btn)
         return btn
 
@@ -186,6 +196,7 @@ async def main(page: ft.Page):
             infra_btn("🌐 CD", "CD"),
             infra_btn("🌐 DispatcherCtl", "DispatcherCtl"),
             node_btn("🖥️ Настроить ноду"),
+            reporter_btn("📊 Reporter"),
         ], wrap=True),
         ft.Row([ft.Text("Скрипты флота (без выбора проекта):", italic=True,
                         color=ft.Colors.CYAN_300)]),

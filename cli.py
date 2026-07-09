@@ -25,7 +25,8 @@ import tools
 _ACTION_MAP = {"new": "1", "add": "2", "check": "3", "dashboard": "3", "status": "3",
                "create": "create", "state": "state", "manage": "manage", "uninstall": "uninstall",
                "sync": "sync", "env": "sync", "infra": "infra", "sessions": "sessions",
-               "cookies": "cookies", "setup-node": "setup-node", "node": "setup-node"}
+               "cookies": "cookies", "setup-node": "setup-node", "node": "setup-node",
+               "reporter": "reporter"}
 
 
 async def _ask(prompt: str, default: str = "") -> str:
@@ -570,6 +571,10 @@ async def run(args=None):
         if action == "setup-node":   # turnkey ввод новой ноды — SSH+БД, папка проекта не нужна
             from core import setup_node
             await setup_node.run_setup_node(db, ssh, dry_run=dry_run)
+            return
+        if action == "reporter":   # Reporter на cluster-ноды (Patroni-callback) — БД+SSH, проект не нужен
+            from core import reporter
+            await reporter.run_reporter(db, ssh, dry_run=dry_run)
             return
         if action == "infra":   # control-plane (GD/WD/CD/DispatcherCtl) — в обход programdata
             from core import infra_deploy
