@@ -141,7 +141,7 @@ async def build_screen(page: ft.Page, on_back):
 
     async def load_binodex_old(_=None):
         bnd_list.controls.clear()
-        bnd_list.controls.append(ft.Text("Binodex — Обновить старый", weight=ft.FontWeight.BOLD))
+        bnd_list.controls.append(ft.Text("Binodex — Options", weight=ft.FontWeight.BOLD))
         rows = await db.binodex_option_accounts()
         rows = rows or []
         pids = [r["program_id"] for r in rows if r["program_id"] is not None]
@@ -178,6 +178,32 @@ async def build_screen(page: ft.Page, on_back):
         print(f"  → кандидатов для новых Binodex-cookies: {len(buttons)}")
         page.update()
 
+    async def _load_binodex_category(title: str, user_ids: list):
+        """Список аккаунтов категории (OTC Screen / Crypta Screen) → кнопки создания кук.
+        Подпись — program_name по binodex-аккаунту (cookies_binodex); флоу тот же (mode='old')."""
+        bnd_list.controls.clear()
+        bnd_list.controls.append(ft.Text(title, weight=ft.FontWeight.BOLD))
+        names = await db.program_names_by_account(user_ids)
+        name_map = {r["cookies_binodex"]: r["program_name"] for r in (names or [])}
+        buttons = []
+        for uid in user_ids:
+            label = name_map.get(uid) or f"User {uid}"
+            buttons.append(account_button(
+                label, run_flow(flows.binodex_flow, ctx, {"user_id": uid, "name": label}, "old")))
+        add_grid(bnd_list, buttons)
+        print(f"  → аккаунтов в «{title}»: {len(buttons)}")
+        page.update()
+
+    async def load_binodex_otc_screen(_=None):
+        rows = await db.binodex_otc_screen_accounts()
+        await _load_binodex_category("Binodex — OTC Screen",
+                                     [r["user_id"] for r in (rows or [])])
+
+    async def load_binodex_crypta(_=None):
+        rows = await db.binodex_crypto_accounts()
+        await _load_binodex_category("Binodex — Crypta Screen",
+                                     [r["user_id"] for r in (rows or [])])
+
     def header(title: str, refresh) -> ft.Row:
         return ft.Row([
             ft.Text(title, weight=ft.FontWeight.BOLD, size=16, expand=True),
@@ -198,10 +224,14 @@ async def build_screen(page: ft.Page, on_back):
     tv_view = ft.Container(expand=True, padding=8, content=ft.Column(
         [tv_header, ft.Divider(), tv_list], expand=True, spacing=8))
 
-    # Binodex: два режима переключают список в одной области.
+    # Binodex: три категории (Options / OTC Screen / Crypta Screen) + «Добавить новый».
+    # Категория = свой источник аккаунтов (option_setting / screen_otc / screen_crypto),
+    # переключает список в одной области; флоу создания кук общий (Privy).
     bnd_header = ft.Row([
         ft.Text("Binodex", weight=ft.FontWeight.BOLD, size=16, expand=True),
-        ft.Button(content=ft.Text("Обновить старый"), on_click=load_binodex_old),
+        ft.Button(content=ft.Text("Options"), on_click=load_binodex_old),
+        ft.Button(content=ft.Text("OTC Screen"), on_click=load_binodex_otc_screen),
+        ft.Button(content=ft.Text("Crypta Screen"), on_click=load_binodex_crypta),
         ft.Button(content=ft.Text("Добавить новый"), on_click=load_binodex_new),
     ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
     bnd_view = ft.Container(expand=True, padding=8, content=ft.Column(

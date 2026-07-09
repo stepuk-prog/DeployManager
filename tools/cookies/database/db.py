@@ -310,6 +310,34 @@ class Database:
         return await self.execute_query(sql, fetch_mode="all",
                                         func="binodex_option_accounts", db="binodex")
 
+    async def binodex_otc_screen_accounts(self):
+        """Аккаунты категории «OTC Screen»: задействованные SCREEN OTC (settings.screen_otc).
+        user_id = id аккаунта = binodex_cookies.user_id. list[Record(user_id)] | [] | False."""
+        return await self.execute_query(
+            "SELECT DISTINCT user_id FROM settings.screen_otc "
+            "WHERE user_id IS NOT NULL ORDER BY user_id",
+            fetch_mode="all", func="binodex_otc_screen_accounts", db="binodex")
+
+    async def binodex_crypto_accounts(self):
+        """Аккаунты категории «Crypta Screen» (settings.screen_crypto). cookies_binodex = id
+        аккаунта = binodex_cookies.user_id. list[Record(user_id)] | [] | False."""
+        return await self.execute_query(
+            "SELECT DISTINCT cookies_binodex AS user_id FROM settings.screen_crypto "
+            "WHERE cookies_binodex IS NOT NULL ORDER BY cookies_binodex",
+            fetch_mode="all", func="binodex_crypto_accounts", db="binodex")
+
+    async def program_names_by_account(self, user_ids: list):
+        """program_name по binodex-аккаунту (cookies_binodex = user_id) для подписи кнопок.
+        Program-БД. list[Record(cookies_binodex, program_name)] | [] | False."""
+        if not user_ids:
+            return []
+        return await self.execute_query(
+            "SELECT DISTINCT ON (cookies_binodex) cookies_binodex, program_name "
+            "FROM program.programdata "
+            "WHERE cookies_binodex = ANY($1) AND program_name IS NOT NULL "
+            "ORDER BY cookies_binodex, program_id",
+            user_ids, fetch_mode="all", func="program_names_by_account", db="program")
+
     async def binodex_existing_user_ids(self):
         """user_id, у кого уже есть storage_state в binodex_cookies (для «Добавить новый»).
         list[Record(user_id)] | [] | False."""

@@ -5,6 +5,13 @@
 ## 2026-07-09
 
 ### Added
+- **Cookies/Binodex — три категории кнопок** (`gui/app.py`, `database/db.py`). Вместо одного
+  «Обновить старый» (был только Options) — **Options** / **OTC Screen** / **Crypta Screen**,
+  каждая со своим источником аккаунтов: `settings.option_setting.cookies_pocket` (6),
+  `settings.screen_otc.user_id` (35), `settings.screen_crypto.cookies_binodex` (9). Подпись
+  кнопки — `program_name` по binodex-аккаунту (`program_names_by_account`). «Добавить новый»
+  без изменений. Флоу создания кук общий (Privy, mode='old'). Новые методы БД:
+  `binodex_otc_screen_accounts`, `binodex_crypto_accounts`, `program_names_by_account`.
 - **Операционные скрипты флота — кнопками** (`core/scripts.py`, ряд «Скрипты флота»
   в GUI + CLI `--action <key>`). Декларативный реестр `SCRIPTS` (новый скрипт = одна
   запись + файл в `assets/`, без правок cli/gui — как `tools.TOOLS`). Скрипты:
@@ -27,6 +34,11 @@
   «Войти напрямую»; при пустом пуле/сбое релея — direct-фолбэк. Релей гасится в
   `BrowserSession.close()` (+ явный стоп при неудачном launch). `database/db.py`:
   `get_active_proxies(scope='binodex')`.
+
+### Changed
+- **Cookies/Binodex — `setup_site` больше НЕ трогает тему** (`apps/binodex.py`). Убран блок
+  выбора/переключения темы (по указанию — тему оставляем как есть); масштаб свечи/графика
+  прокликивается как прежде.
 
 ### Fixed
 - **Cookies/Binodex — повторная модалка логина после входа** (`settings/config.py`).

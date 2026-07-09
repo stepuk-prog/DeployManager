@@ -78,8 +78,9 @@ async def dismiss_welcome(page: Page) -> None:
 
 
 async def setup_site(page: Page, sel: dict) -> None:
-    """Прокликать настройку сайта (масштаб свечи/графика + тема) и закрыть окно. Разовый
-    флоу: слепые паузы оправданы — ждём анимации меню, надёжного DOM-сигнала у дропдаунов нет."""
+    """Прокликать настройку сайта (масштаб свечи/графика) и закрыть окно. Разовый флоу:
+    слепые паузы оправданы — ждём анимации меню, надёжного DOM-сигнала у дропдаунов нет.
+    Выбор темы НЕ трогаем (по указанию — тему оставляем как есть)."""
     await page.wait_for_timeout(2_500)
     await dismiss_welcome(page)   # у новых аккаунтов окно Welcome перекрывает график
     for open_key, item_key in SETUP_STEPS:
@@ -89,11 +90,3 @@ async def setup_site(page: Page, sel: dict) -> None:
             await page.wait_for_timeout(500)
         except (Exception,):
             pass
-    try:
-        await page.locator(sel["setup_settings_open"]).first.click(timeout=8_000)
-        await page.locator(sel["setup_theme"]).first.click(timeout=8_000)
-        await page.locator(sel["setup_theme_toggle"]).first.click(timeout=8_000)
-        await page.wait_for_timeout(500)
-        await page.locator(sel["setup_settings_open"]).first.click(timeout=8_000)  # закрыть
-    except (Exception,):
-        pass
