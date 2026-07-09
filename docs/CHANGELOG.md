@@ -5,6 +5,12 @@
 ## 2026-07-09
 
 ### Added
+- **pgBackRest — кнопка «🗄️ pgBackRest» (копия бэкапа на локальную машину)** (`core/pgbackrest.py`).
+  Плановый бэкап кластера (вс 03:00) живёт на 3 cluster-нодах (артефакты — `Clusters/programs/
+  pgbackrest/`: conf/скрипт/timer, retention=1, копия на каждой ноде). Кнопка по требованию тянет
+  репозиторий с выбранной cluster-ноды на рабочую станцию в `PGBACKREST_LOCAL_DIR` (env) — 4-я
+  offsite-копия. Read-only rsync (root@node:`PGBACKREST_REPO`→локально), кластер не трогает. CLI
+  `--action pgbackrest`. Env: `PGBACKREST_LOCAL_DIR`/`PGBACKREST_REPO`. Мониторинг «протух» — потом.
 - **«Настроить ноду» ФАЗА 2 — член кластера (пошаговый визард)** (`core/setup_cluster_member.py`).
   Замена мёртвой cluster-ноды (Patroni/etcd) — опасная процедура (`node_replacement.md`: swap
   членства etcd с окном quorum 2/2, basebackup, чистка мёртвого IP на живых нодах). Поэтому НЕ

@@ -66,7 +66,8 @@ async def main(page: ft.Page):
     async def run_branch(action: str, component: str | None = None):
         # infra-деплой (GD/WD/CD/DispatcherCtl) и суб-инструменты (tools: сессии и пр.) папку
         # проекта НЕ требуют — работают с БД напрямую. Прочие ветки требуют выбранный проект.
-        if (action not in ("infra", "setup-node", "reporter") and action not in tools.TOOL_KEYS
+        if (action not in ("infra", "setup-node", "reporter", "pgbackrest")
+                and action not in tools.TOOL_KEYS
                 and action not in scripts_mod.SCRIPT_KEYS and not state["path"]):
             sink.write("Сначала выберите папку проекта (кнопка «Обзор…»).\n")
             return
@@ -121,6 +122,16 @@ async def main(page: ft.Page):
             content=ft.Text(label, color=ft.Colors.WHITE),
             bgcolor=ft.Colors.DEEP_PURPLE_600,
             on_click=lambda e: page.run_task(run_branch, "reporter"))
+        branch_buttons.append(btn)
+        return btn
+
+    def pgbackrest_btn(label: str) -> ft.Control:
+        # Копия бэкапа кластера на локальную машину (PGBACKREST_LOCAL_DIR). Read-only pull.
+        btn = ft.Button(
+            content=ft.Text(label, color=ft.Colors.WHITE),
+            bgcolor=ft.Colors.BLUE_GREY_600,
+            tooltip="Скопировать репозиторий pgBackRest с cluster-ноды в локальную папку (env PGBACKREST_LOCAL_DIR)",
+            on_click=lambda e: page.run_task(run_branch, "pgbackrest"))
         branch_buttons.append(btn)
         return btn
 
@@ -197,6 +208,7 @@ async def main(page: ft.Page):
             infra_btn("🌐 DispatcherCtl", "DispatcherCtl"),
             node_btn("🖥️ Настроить ноду"),
             reporter_btn("📊 Reporter"),
+            pgbackrest_btn("🗄️ pgBackRest"),
         ], wrap=True),
         ft.Row([ft.Text("Скрипты флота (без выбора проекта):", italic=True,
                         color=ft.Colors.CYAN_300)]),

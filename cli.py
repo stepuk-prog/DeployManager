@@ -26,7 +26,7 @@ _ACTION_MAP = {"new": "1", "add": "2", "check": "3", "dashboard": "3", "status":
                "create": "create", "state": "state", "manage": "manage", "uninstall": "uninstall",
                "sync": "sync", "env": "sync", "infra": "infra", "sessions": "sessions",
                "cookies": "cookies", "setup-node": "setup-node", "node": "setup-node",
-               "reporter": "reporter"}
+               "reporter": "reporter", "pgbackrest": "pgbackrest"}
 
 
 async def _ask(prompt: str, default: str = "") -> str:
@@ -575,6 +575,10 @@ async def run(args=None):
         if action == "reporter":   # Reporter на cluster-ноды (Patroni-callback) — БД+SSH, проект не нужен
             from core import reporter
             await reporter.run_reporter(db, ssh, dry_run=dry_run)
+            return
+        if action == "pgbackrest":   # копия бэкапа кластера на локальную машину — БД+SSH, проект не нужен
+            from core import pgbackrest
+            await pgbackrest.run_pgbackrest_pull(db, ssh, dry_run=dry_run)
             return
         if action == "infra":   # control-plane (GD/WD/CD/DispatcherCtl) — в обход programdata
             from core import infra_deploy

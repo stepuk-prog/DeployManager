@@ -108,6 +108,14 @@ CLUSTER_CONFIG_DIR = str(Path(
     os.getenv("CLUSTER_CONFIG_DIR", os.path.join(CLUSTERS_DIR, "ConfigFiles", "cluster-node"))
 ).expanduser())
 
+# pgBackRest: кнопка «pgBackRest» тянет репозиторий бэкапа с cluster-ноды в ЛОКАЛЬНУЮ папку
+# (4-я offsite-копия на рабочей станции). Папка назначения — из env PGBACKREST_LOCAL_DIR.
+# PGBACKREST_REPO — путь репозитория НА нодах (выделенная папка).
+PGBACKREST_LOCAL_DIR = str(Path(
+    os.getenv("PGBACKREST_LOCAL_DIR", os.path.join("~", "pgbackrest_backup"))
+).expanduser())
+PGBACKREST_REPO = os.getenv("PGBACKREST_REPO", "/home/vova/pgbackrest")
+
 # ----- Настройка новой ноды («Настроить ноду») -----
 # Порты, которые кластер открывает клиент-узлу (haproxy_client → лидер): entrypoint
 # 6442, leader-pgbouncer 6543, Patroni health 8008 (+ 22 SSH). НЕ etcd/5432 — клиенту

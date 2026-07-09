@@ -12,7 +12,7 @@ def _parse_args():
     p.add_argument("--action",
                    choices=["new", "add", "check", "create", "state", "manage", "uninstall",
                             "sync", "infra", "sessions", "cookies", "setup-node", "reporter",
-                            *SCRIPT_KEYS],
+                            "pgbackrest", *SCRIPT_KEYS],
                    help="ветка без меню: new (с нуля) / add (добавить сервер) / "
                         "check (версии) / create / state / manage / uninstall / sync (.env+юниты) / "
                         "infra (деплой control-plane компонента: --component) / "
