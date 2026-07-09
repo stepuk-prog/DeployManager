@@ -62,6 +62,10 @@
   `get_active_proxies(scope='binodex')`.
 
 ### Changed
+- **Юниты ставятся с `chmod 0644` (не executable)** (`classes/deployer.py` `install_services`).
+  `cp` сохранял +x источника → systemd флудил «marked executable» (~80K строк/сутки). Теперь
+  `cp && chmod 0644` на каждый юнит. (Провижининг-часть — `provision-client.sh` в Clusters:
+  chmod-x sweep + `99-no-auto-upgrade` drop-in на бот-нодах; ре-вендорено в `assets/`.)
 - **Пути к исходникам компонентов — конфигурируемы через env** (`core/infra_deploy.py`).
   Локальный исходник каждого control-plane компонента резолвится из env `<KEY>_DIR`
   (`GD_DIR`/`WD_DIR`/`CD_DIR`/`DISPATCHERCTL_DIR`) + `COMMON_DIR`, с фолбэком на

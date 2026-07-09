@@ -137,7 +137,9 @@ class Deployer:
     async def install_services(self, host: str, remote_folder: str, service_files: list[str]) -> bool:
         """sudo cp юнитов из remote_folder/systemd в /etc/systemd/system + daemon-reload.
         Юниты могут лежать в подкаталогах (systemd/OTC, systemd/Crypto…) — ищем по имени в дереве
-        (find -print -quit). Имя юнита уникально (в /etc оно плоское). Пустой find → cp падает явно."""
+        (find -print -quit). Имя юнита уникально (в /etc оно плоское). Пустой find → cp падает явно.
+        `chmod 0644` после cp: юнит-файл НИКОГДА не должен быть executable — иначе systemd на каждом
+        обращении флудит «marked executable» (был лог-флуд ~80K/сутки; cp сохранял +x источника)."""
         if not service_files:
             return True
         sd = shlex.quote(os.path.join(remote_folder, "systemd"))
@@ -145,7 +147,7 @@ class Deployer:
         for name in service_files:
             src = f'"$(find {sd} -name {shlex.quote(name)} -print -quit)"'
             dst = shlex.quote(os.path.join(config.SYSTEMD_DIR, name))
-            cps.append(f"cp {src} {dst}")
+            cps.append(f"cp {src} {dst} && chmod 0644 {dst}")
         inner = " && ".join(cps + ["systemctl daemon-reload"])
         res = await self.ssh.run_priv(host, f"sh -c {shlex.quote(inner)}", timeout=30)
         if not res.ok:

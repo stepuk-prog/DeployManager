@@ -111,8 +111,30 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 EOF
+chmod 0644 /etc/systemd/system/haproxy_client.service   # юнит НЕ executable (см. ниже)
 systemctl daemon-reload
 systemctl enable --now haproxy_client.service
+
+step "systemd-гигиена — снять +x с юнитов (иначе systemd флудит «marked executable»)"
+# Юнит-файл НИКОГДА не должен быть executable. Деплой/rsync мог сохранить +x источника →
+# systemd на каждом обращении пишет «Configuration file … is marked executable» (был флуд
+# ~80K строк/сутки, journal раздувало до 200М). Снимаем со ВСЕХ .service (defensive).
+find /etc/systemd/system -maxdepth 1 -name '*.service' -type f -perm -u+x -exec chmod -x {} + 2>/dev/null || true
+
+step "apt — ОТКЛючить авто-апгрейды на бот-ноде (подмена system .so под живым Playwright → краш)"
+# unattended-upgrades, обновляя ЛЮБУЮ system-библиотеку (mesa/libgraphite2/libfreetype/…),
+# которую держит замапленной живой Playwright-Firefox → краш рендера → бот exit → само-выключение
+# (status=false) → WD crash-loop. Точечный GPU-blacklist оказался whack-a-mole (libgraphite2
+# 06-18 пробил его) → полностью ВЫКЛючаем авто-апгрейды. Апдейты — вручную в окне с остановкой
+# ботов (пятница 23:30 МСК, боты погашены weekend-stop). ⚠️ ТОЛЬКО бот-ноды (client) — cluster
+# DB-ноды НЕ трогаем (им нужны секьюрити-патчи, отдельный профиль).
+cat > /etc/apt/apt.conf.d/99-no-auto-upgrade <<'EOF'
+// Бот-нода (Playwright): авто-апгрейды ВЫКЛючены — любая system .so, подменённая под живым
+// Firefox, роняет рендер → само-выключение бота → WD crash-loop (инциденты 2026-06-16 mesa,
+// 2026-06-18 libgraphite2). Апдейты — вручную по расписанию (пятница 23:30, боты погашены).
+APT::Periodic::Unattended-Upgrade "0";
+EOF
+systemctl disable --now apt-daily-upgrade.timer 2>/dev/null || true
 
 echo -e "\n${G}✅ Клиентский узел настроен.${N}"
 echo "Дальше: 1) на кластере открыть этому IP доступ — scripts/whitelist-ip.sh <этот_IP> --apply"
