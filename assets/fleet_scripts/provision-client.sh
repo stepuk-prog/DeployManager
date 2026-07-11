@@ -136,6 +136,17 @@ APT::Periodic::Unattended-Upgrade "0";
 EOF
 systemctl disable --now apt-daily-upgrade.timer 2>/dev/null || true
 
+step "Playwright lock-sweep → /usr/local/bin (снимает висячий firefox-lock, роняющий launch())"
+# Свип удаляет висячие firefox-lock в ОБЩЕМ кэше ~/.cache/ms-playwright (роняют launch()) +
+# протухшие .links. Юниты браузер-ботов зовут его в ExecStartPre (ставит DeployManager).
+# Источник — sibling scripts/pw_lock_sweep.sh (DeployManager кладёт его рядом в $DIR при заливке).
+if [[ -f "$DIR/pw_lock_sweep.sh" ]]; then
+  install -m 0755 "$DIR/pw_lock_sweep.sh" /usr/local/bin/pw_lock_sweep.sh
+  echo "   ✅ /usr/local/bin/pw_lock_sweep.sh"
+else
+  echo "   ⚠️ $DIR/pw_lock_sweep.sh не найден — свип НЕ установлен (доставь вручную: install -m755 pw_lock_sweep.sh /usr/local/bin/)."
+fi
+
 echo -e "\n${G}✅ Клиентский узел настроен.${N}"
 echo "Дальше: 1) на кластере открыть этому IP доступ — scripts/whitelist-ip.sh <этот_IP> --apply"
 echo "        2) зарегистрировать в vocabulary.nodes (claster=f) и развернуть watchdog (см. node_replacement.md шаг 8)"

@@ -75,7 +75,8 @@ def _scaffold(tmp_path, monkeypatch, *, scripts=True, pubkey=True):
     sdir = tmp_path / "scripts"
     sdir.mkdir()
     if scripts:
-        for f in ("provision-base.sh", "provision-client.sh", "whitelist-ip.sh"):
+        for f in ("provision-base.sh", "provision-client.sh", "whitelist-ip.sh",
+                  "pw_lock_sweep.sh"):
             (sdir / f).write_text("#!/usr/bin/env bash\n")
     key = tmp_path / "id_nodes"
     key.write_text("PRIVATE")

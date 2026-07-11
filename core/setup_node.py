@@ -33,19 +33,22 @@ logger = get_logger(__name__)
 _PRIV = config.PRIV_USER or "root"        # под кем привилегированные операции по ключу
 _REMOTE_BASE = "/root/provision-base.sh"
 _REMOTE_CLIENT = "/root/provision-client.sh"
+_REMOTE_SWEEP = "/root/pw_lock_sweep.sh"   # рядом с client — provision-client зовёт через $DIR
 
 
-def _scripts() -> tuple[str, str, str] | None:
+def _scripts() -> tuple[str, str, str, str] | None:
     """Пути к ВЕНДОРЕННЫМ bash-примитивам в assets/fleet_scripts (DM самодостаточен —
-    не зависит от наличия репозитория Clusters). None — если чего-то нет."""
+    не зависит от наличия репозитория Clusters). None — если чего-то нет.
+    pw_lock_sweep.sh кладётся рядом с provision-client.sh на узле (тот зовёт его через $DIR)."""
     from core.scripts import BUNDLED_DIR
-    base, client, wl = (os.path.join(BUNDLED_DIR, f) for f in
-                        ("provision-base.sh", "provision-client.sh", "whitelist-ip.sh"))
-    for p in (base, client, wl):
+    base, client, wl, sweep = (os.path.join(BUNDLED_DIR, f) for f in
+                               ("provision-base.sh", "provision-client.sh",
+                                "whitelist-ip.sh", "pw_lock_sweep.sh"))
+    for p in (base, client, wl, sweep):
         if not os.path.isfile(p):
             print(f"🛑 Нет вендоренного скрипта: {p}")
             return None
-    return base, client, wl
+    return base, client, wl, sweep
 
 
 def _read_pubkey() -> str | None:
@@ -74,7 +77,7 @@ async def run_setup_node(db: Database, ssh: SshClient, *, dry_run: bool = False)
     paths = _scripts()
     if not paths:
         return
-    base_sh, client_sh, whitelist_sh = paths
+    base_sh, client_sh, whitelist_sh, sweep_sh = paths
     scripts_dir = os.path.dirname(base_sh)
     vova_pubkey = _read_pubkey()
     if vova_pubkey is None:
@@ -155,9 +158,14 @@ async def run_setup_node(db: Database, ssh: SshClient, *, dry_run: bool = False)
     # 2. ролевой client-хвост (по ключу root)
     client_cmd = f"bash {_REMOTE_CLIENT} --tail-only"
     if dry_run:
-        print(f"{tag}2. upload {client_sh} → {ip}:{_REMOTE_CLIENT}; run({_PRIV}): {client_cmd}")
+        print(f"{tag}2. upload {client_sh} → {ip}:{_REMOTE_CLIENT} "
+              f"(+ {sweep_sh} → {_REMOTE_SWEEP}); run({_PRIV}): {client_cmd}")
     else:
         print("━━━ 2/6 ролевой client-хвост (haproxy_client) ━━━")
+        # pw_lock_sweep.sh кладём РЯДОМ (provision-client установит его в /usr/local/bin через $DIR)
+        if not await ssh.upload(ip, sweep_sh, _REMOTE_SWEEP, user=_PRIV, mode=0o755):
+            print("🛑 Не удалось залить pw_lock_sweep.sh.")
+            return
         if not await ssh.upload(ip, client_sh, _REMOTE_CLIENT, user=_PRIV, mode=0o755):
             print("🛑 Не удалось залить provision-client.sh.")
             return
