@@ -34,3 +34,10 @@ def detect_post_install(project_dir: str) -> list[tuple[str, str]]:
     """[(пакет, команда)] для пакетов, требующих отдельной установки."""
     names = _requirement_names(project_dir)
     return [(pkg, make_cmd()) for pkg, make_cmd in _POST_INSTALL.items() if pkg in names]
+
+
+def is_browser_project(project_dir: str) -> bool:
+    """Проект гоняет браузер (Playwright) → его юнитам нужен pw_lock_sweep drop-in
+    (ExecStartPre-свип висячего firefox-lock + KillMode/TimeoutStopSec). Сигнал —
+    playwright в requirements.txt (надёжнее extra_cmds: update-путь их обнуляет)."""
+    return "playwright" in _requirement_names(project_dir)

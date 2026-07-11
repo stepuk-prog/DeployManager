@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from classes.deployer import Deployer
 from classes.manifest import LocalVersion, build_manifest
 from classes.ssh_client import SshClient
-from core import ui
+from core import provision, ui
 from core.verify import local_hashes, remote_hashes
 from settings import config
 
@@ -58,6 +58,9 @@ async def _deploy_one(ssh: SshClient, deployer: Deployer, node, project_dir: str
         print(f"  [{name}] ⚠️ зависимости изменились, но PROVISION=0 — пакеты НЕ обновлены")
     if not await deployer.install_services(ip, remote_folder, service_files):
         return DeployResult(name, ip, False, "install_services")
+    if provision.is_browser_project(project_dir):   # браузер-боты: pw_lock_sweep drop-in на юниты
+        if not await deployer.install_pw_sweep_dropins(ip, service_files):
+            return DeployResult(name, ip, False, "pw_sweep_dropins")
     if not await deployer.write_version(ip, remote_folder, manifest_json):
         return DeployResult(name, ip, False, "write_version")
     return DeployResult(name, ip, True, "done")

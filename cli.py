@@ -411,6 +411,9 @@ async def _install_units_light(db: Database, ssh: SshClient, project_dir: str, r
                 ok = False
         else:
             print(f"  {name:16} • юниты уже на месте")
+        if ok and units and provision_mod.is_browser_project(project_dir):
+            if not await deployer.install_pw_sweep_dropins(ip, units):   # браузер-боты
+                print(f"  {name:16} ⚠️ pw_lock_sweep drop-in не применён")
         for r in recs:
             try:
                 res = await db.bind_service_node(r["program_id"], node["id"], status="standby")

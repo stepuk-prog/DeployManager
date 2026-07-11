@@ -154,6 +154,30 @@ class Deployer:
             logger.error("install_services %s FAILED: %s", host, res.stderr or res.stdout)
         return res.ok
 
+    async def install_pw_sweep_dropins(self, host: str, service_files: list[str]) -> bool:
+        """Для юнитов браузер-ботов — drop-in `10-pw-lock-sweep.conf` на КАЖДЫЙ юнит:
+          ExecStartPre=-/usr/local/bin/pw_lock_sweep.sh  (свип висячего firefox-lock,
+            роняющего launch(); `-` = best-effort, фейл свипа не блокирует старт)
+          KillMode=mixed + TimeoutStopSec=30  (аккуратно гасим дерево firefox, не по SIGKILL).
+        Идемпотентно (перезапись). Раньше — ручной node-level drop-in на 752 юнита."""
+        if not service_files:
+            return True
+        conf = ("[Service]\n"
+                "ExecStartPre=-/usr/local/bin/pw_lock_sweep.sh\n"
+                "KillMode=mixed\n"
+                "TimeoutStopSec=30\n")
+        b64 = base64.b64encode(conf.encode("utf-8")).decode("ascii")
+        cmds = []
+        for name in service_files:
+            ddir = shlex.quote(os.path.join(config.SYSTEMD_DIR, name + ".d"))
+            dst = shlex.quote(os.path.join(config.SYSTEMD_DIR, name + ".d", "10-pw-lock-sweep.conf"))
+            cmds.append(f"mkdir -p {ddir} && echo {b64} | base64 -d > {dst} && chmod 0644 {dst}")
+        inner = " && ".join(cmds + ["systemctl daemon-reload"])
+        res = await self.ssh.run_priv(host, f"sh -c {shlex.quote(inner)}", timeout=30)
+        if not res.ok:
+            logger.error("install_pw_sweep_dropins %s FAILED: %s", host, res.stderr or res.stdout)
+        return res.ok
+
     async def provision(self, host: str, remote_folder: str, extra_cmds: list[str]) -> bool:
         """Окружение на ноде: venv → pip install -U pip → pip install -r requirements.txt
         → доп. установки (extra_cmds, напр. 'playwright install firefox'). Команды из README — в коде."""

@@ -1,4 +1,4 @@
-from core.provision import _requirement_names, detect_post_install
+from core.provision import _requirement_names, detect_post_install, is_browser_project
 
 
 def _req(tmp_path, content):
@@ -23,3 +23,12 @@ def test_detect_none(tmp_path):
 
 def test_no_requirements_file(tmp_path):
     assert _requirement_names(str(tmp_path)) == set()
+
+
+def test_is_browser_project(tmp_path):
+    assert is_browser_project(_req(tmp_path, "playwright==1.57.0\nasyncpg\n")) is True
+
+
+def test_is_browser_project_false(tmp_path):
+    assert is_browser_project(_req(tmp_path, "asyncpg\nPillow\n")) is False
+    assert is_browser_project(str(tmp_path)) is False   # нет requirements.txt

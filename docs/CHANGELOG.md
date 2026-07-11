@@ -2,6 +2,21 @@
 
 Все значимые изменения DeployManager. Формат — по разделам Added / Changed / Fixed.
 
+## 2026-07-11
+
+### Added
+- **Playwright lock-sweep автоматом на браузер-ботах** (закрыты 2 «хвоста» из TODO Clusters).
+  Раньше свип висячего firefox-lock (`~/.cache/ms-playwright`, роняет `launch()`) и его вызов в
+  юнитах раскладывались на 12 нод / 752 юнита ВРУЧНУЮ. Теперь:
+  - `setup_node` заливает `pw_lock_sweep.sh` рядом с `provision-client.sh` (`_scripts()` → 4-й
+    вендоренный путь), а `provision-client.sh` ставит его в `/usr/local/bin` → НОВАЯ нода получает
+    свип при провижининге.
+  - `Deployer.install_pw_sweep_dropins` кладёт на КАЖДЫЙ юнит браузер-проекта drop-in
+    `10-pw-lock-sweep.conf` (`ExecStartPre=-/usr/local/bin/pw_lock_sweep.sh` + `KillMode=mixed` +
+    `TimeoutStopSec=30`). Вызывается в главном деплое (`_deploy_one`) и лёгкой доустановке юнитов
+    (`cli`), гейт — `provision.is_browser_project(project_dir)` (playwright в requirements; надёжнее
+    extra_cmds, которые update-путь обнуляет). Идемпотентно.
+
 ## 2026-07-09
 
 ### Added
