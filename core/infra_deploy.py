@@ -57,6 +57,7 @@ class InfraComponent:
     node_env: dict                         # env_key -> колонка vocabulary.nodes (идентичность ноды)
     needs_common: bool = True
     restart: bool = True
+    wrapper: "tuple[str, str] | None" = None   # (remote_path, содержимое) — CLI-обёртка в PATH (755)
 
     @property
     def source_dir(self) -> str:
@@ -126,6 +127,10 @@ INFRA_COMPONENTS: dict[str, InfraComponent] = {
         nodes="all",
         node_env={},
         restart=False,
+        # CLI-обёртка в PATH — раньше клалась вручную (на новых нодах её не было).
+        wrapper=("/usr/local/bin/dispatcherctl",
+                 '#!/bin/bash\nexec env PYTHONPATH=/opt '
+                 '/opt/DispatcherCtl/venv/bin/python -m DispatcherCtl.main "$@"\n'),
     ),
 }
 
@@ -229,6 +234,18 @@ async def _install_units(ssh: SshClient, host: str, comp: InfraComponent) -> boo
     return res.ok
 
 
+async def _install_wrapper(ssh: SshClient, host: str, comp: InfraComponent) -> bool:
+    """Положить CLI-обёртку comp.wrapper=(path, content) в PATH под root, chmod 755. Идемпотентно."""
+    if not comp.wrapper:
+        return True
+    path, content = comp.wrapper
+    b64 = base64.b64encode(content.encode("utf-8")).decode("ascii")
+    dst = shlex.quote(path)
+    inner = f"echo {b64} | base64 -d > {dst} && chmod 755 {dst}"
+    res = await ssh.run_priv(host, f"sh -c {shlex.quote(inner)}", timeout=15)
+    return res.ok
+
+
 async def _systemctl(ssh: SshClient, host: str, comp: InfraComponent, cmd: str) -> bool:
     """systemctl {cmd} для всех юнитов компонента (root). restart стартует и остановленный."""
     names = " ".join(shlex.quote(u) for u, _ in comp.units)
@@ -305,6 +322,9 @@ async def _deploy_one(ssh: SshClient, deployer: Deployer, comp: InfraComponent,
 
     if not await _install_units(ssh, ip, comp):
         return DeployResult(name, ip, False, "install_units")
+
+    if not await _install_wrapper(ssh, ip, comp):
+        return DeployResult(name, ip, False, "install_wrapper")
 
     if rsync_code and not await deployer.write_version(ip, comp.remote_folder, manifest_json):
         return DeployResult(name, ip, False, "write_version")

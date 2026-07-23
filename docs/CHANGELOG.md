@@ -17,6 +17,14 @@
   - `core/setup_state.py` (НОВЫЙ): resume-журнал `logs/setup_node/<ip>.json` — первый запуск пишет
     введённые данные + прогресс по шагам, повторный спрашивает **только IP**, грузит журнал и
     продолжает с первого не-`done` шага. Пароль в журнал НЕ пишется. Атомарная запись (tmp+replace).
+- **Шаг `operator_access` в мастере** — ставит операторские SSH-ключи флота (`cluster_root@PRIMARY`,
+  `root@primary-pq-f`) в root+vova authorized_keys и операторские IP в fail2ban ignoreip на КАЖДУЮ
+  новую ноду. Раньше провижн клал только ключ Vlad'а → коллеги/автоматизация по своим ключам на
+  новую ноду не заходили (инцидент VIDEO-3: FileZilla по RSA работал, терминал по ED25519 —
+  нет). Ключи/IP вендорены: `assets/fleet_access/operator_keys.pub` + `operator_ignoreip.txt`.
+- **DispatcherCtl ставит CLI-обёртку** `/usr/local/bin/dispatcherctl` (`InfraComponent.wrapper`,
+  устанавливается в `_deploy_one` под root, 755). Раньше `units=()` → обёртку клали ВРУЧНУЮ, на новых
+  нодах команды `dispatcherctl` в PATH не было (только `/opt/DispatcherCtl/venv/bin/python -m …`).
 
 ### Fixed
 - **`provision-base.sh` не клал ключ root** (только vova) → мастер не заходил под root по ключу для
