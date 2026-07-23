@@ -2,6 +2,32 @@
 
 Все значимые изменения DeployManager. Формат — по разделам Added / Changed / Fixed.
 
+## 2026-07-23
+
+### Added
+- **«Настроить ноду» — пошаговый мастер с диалогами и resume-журналом.** Раньше base шёл одним
+  bash-заходом (9 шагов разом, без диалогов), а при обрыве всё начиналось заново.
+  - `provision-base.sh` рефакторен в step-функции + диспетчер `--step <id>` / `--list-steps`
+    (standalone-режим «все шаги подряд» сохранён). Порядок: **`user` первым** (кладёт ключи
+    vova И root) → hostname → locales → packages → **python311** → sshd → fail2ban → ufw →
+    dropins → haproxy.
+  - `core/setup_node.py`: единый шаговый цикл с диалогом на КАЖДЫЙ шаг (Выполнить / Пропустить /
+    Отмена мастера) + фазы клиента (client_tail / whitelist / register / wd). `user` первым →
+    остальные шаги идут по ключу (пароль нужен только на `user`, на resume — не нужен вовсе).
+  - `core/setup_state.py` (НОВЫЙ): resume-журнал `logs/setup_node/<ip>.json` — первый запуск пишет
+    введённые данные + прогресс по шагам, повторный спрашивает **только IP**, грузит журнал и
+    продолжает с первого не-`done` шага. Пароль в журнал НЕ пишется. Атомарная запись (tmp+replace).
+
+### Fixed
+- **`provision-base.sh` не клал ключ root** (только vova) → мастер не заходил под root по ключу для
+  client-хвоста/WD. Теперь шаг `user` кладёт ключ и в `/root/.ssh/authorized_keys`. (VIDEO-3, 07-23.)
+- **`provision-base.sh` не ставил python3.11** → на свежей Ubuntu 24.04 (дефолт 3.12) provision WD
+  падал `python3.11: command not found`. Добавлен шаг `python311` (deadsnakes PPA).
+- **HAProxy-загрузка (шаг 9) спотыкалась об IPv6-only DNS** без v6-маршрута (`wget` → exit 4).
+  Теперь `wget -4` (форс IPv4).
+- **`whitelist_ip` (fleet-скрипт) дефолтил порты на `22`** → клиент-нода получала только SSH, WD не
+  доставал БД. Дефолт → `config.SETUP_CLIENT_PORTS` (`22 6442 6543 8008`).
+
 ## 2026-07-11
 
 ### Added

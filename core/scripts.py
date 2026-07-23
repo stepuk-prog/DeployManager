@@ -77,7 +77,10 @@ SCRIPTS: list[dict] = [
         "scope": "local",
         "args": [
             {"prompt": "IP для whitelist", "flag": None, "validate": "ip"},
-            {"prompt": "Порты (через пробел)", "flag": "--ports", "default": "22"},
+            # дефолт = клиент-набор (SSH + haproxy_client 6442 + PgBouncer 6543 + Patroni 8008),
+            # чтобы ввод новой клиент-ноды не требовал помнить порты. Для чисто-SSH — стереть лишнее.
+            {"prompt": "Порты (через пробел)", "flag": "--ports",
+             "default": config.SETUP_CLIENT_PORTS},
         ],
         "apply_flag": "--apply",       # dry-run → подтверждение → apply
         "danger": False,

@@ -1,28 +1,29 @@
 """«Настроить ноду» — turnkey-ввод нового узла флота (фаза 1: обычный узел).
 
-Контур (согласован с Vlad):
-  форма(IP, root-pass, hostname, server_name) → гард дубля по IP
-  0. base bootstrap: одноразовый ПАРОЛЬНЫЙ коннект root@IP → залить provision-base.sh →
-     прогнать (создаёт vova+ключ, hardening, HAProxy-бинарь; ВЫКЛЮЧАЕТ password-auth).
-  1. ДИАЛОГ «тип ноды»: [Обычный узел] | [Элемент кластера → ⛧ заглушка фазы 1].
-  2. ролевой client-хвост: provision-client.sh --tail-only (по ключу root) → haproxy_client.
-  3. verify: key-доступ vova + haproxy_client active.
-  4. whitelist: ПОКАЗАТЬ команду whitelist-ip.sh → по подтверждению прогнать по флоту.
-  5. регистрация (поздняя!): INSERT vocabulary.nodes (claster=false) — только по здоровому узлу.
-  6. deploy Watchdog на эту ноду (движок infra_deploy) → is_online=true.
-  + audit-запись.
+Пошаговый мастер с диалогом на КАЖДЫЙ шаг (Выполнить / Пропустить / Отмена мастера) и
+resume-ЖУРНАЛОМ (logs/setup_node/<ip>.json): первый запуск пишет введённые данные + прогресс,
+повторный — спрашивает ТОЛЬКО IP, грузит журнал и продолжает с первого не-выполненного шага.
 
-Повторный прогон безопасен: если key-доступ vova уже есть (база отработала, password-auth
-уже off) — фаза 0 пропускается.
+Шаги:
+  base (provision-base.sh --step <id>, идут по SSH):
+    user (vova+root-ключи+polkit — ПЕРВЫЙ, единственный требует пароль) → hostname → locales
+    → packages → python311 → sshd → fail2ban → ufw → dropins → haproxy
+  фазы клиента (Python-действия):
+    client_tail (haproxy_client) → whitelist (по флоту) → register (vocabulary.nodes) → wd (Watchdog+online)
+
+Auth: `user` кладёт ключи vova И root → дальнейшие шаги идут по ключу. На resume, если ключ уже
+пускает, пароль не запрашивается вовсе. Тип «Элемент кластера» после base уходит в фазу-2 визард.
 """
-import asyncio
 import getpass
 import ipaddress
 import os
 import shlex
+import shutil
+import tempfile
 
-from core import audit, infra_deploy, ui
+from core import audit, infra_deploy, setup_state, ui
 from core.deploy import print_deploy_results
+from core.scripts import _gen_nodes_sh, _run_local
 from database.db import Database
 from classes.ssh_client import SshClient
 from logs import get_logger
@@ -30,17 +31,43 @@ from settings import config
 
 logger = get_logger(__name__)
 
-_PRIV = config.PRIV_USER or "root"        # под кем привилегированные операции по ключу
+_PRIV = config.PRIV_USER or "root"
 _REMOTE_BASE = "/root/provision-base.sh"
 _REMOTE_CLIENT = "/root/provision-client.sh"
-_REMOTE_SWEEP = "/root/pw_lock_sweep.sh"   # рядом с client — provision-client зовёт через $DIR
+_REMOTE_SWEEP = "/root/pw_lock_sweep.sh"
+
+# base-шаги: (id, заголовок, пояснение, длинный_ли_прогон)
+_BASE_STEPS = [
+    ("user", "Пользователь vova + ключи (vova и root) + polkit",
+     "Создаёт vova, кладёт SSH-ключ для vova И root (root по ключу нужен всему флоту для "
+     "юнитов/systemctl), даёт polkit-грант на systemctl. ПЕРВЫЙ шаг — после него мастер "
+     "работает по ключу без пароля.", False),
+    ("hostname", "Hostname + timezone",
+     "Задаёт системный hostname узла и timezone Europe/Moscow.", False),
+    ("locales", "Локали ru_RU + en_US",
+     "Генерирует локали ru_RU/en_US — критично для совместимости с кластером.", False),
+    ("packages", "Базовые пакеты (apt)",
+     "Ставит build-стек, сеть и утилиты: git/curl/ufw/fail2ban/build-essential/ethtool/…", True),
+    ("python311", "Python 3.11 (deadsnakes)",
+     "Ставит python3.11 — venv-стандарт флота для WD/GD/CD (на Ubuntu 24.04 дефолт 3.12, "
+     "без 3.11 деплой WD падает).", True),
+    ("sshd", "SSHd hardening",
+     "MaxSessions/MaxStartups/ClientAlive*, перезапуск ssh.", False),
+    ("fail2ban", "fail2ban",
+     "jail.local (systemd backend, ignoreip) + enable/restart.", False),
+    ("ufw", "UFW (только SSH)",
+     "deny incoming, allow 22, enable. Ролевые порты (БД) откроет шаг whitelist.", False),
+    ("dropins", "Drop-in'ы (needrestart / GPU / tmpfiles / nic)",
+     "needrestart (не авто-рестартить демоны) + apt GPU-blacklist + tmpfiles-уборка "
+     "браузер-профилей + nic-ring-tune.", False),
+    ("haproxy", "HAProxy 3.1.0 из исходников",
+     "Скачивает (по IPv4) и собирает бинарь haproxy — общий для клиента и члена кластера.", True),
+]
 
 
 def _scripts() -> tuple[str, str, str, str] | None:
-    """Пути к ВЕНДОРЕННЫМ bash-примитивам в assets/fleet_scripts (DM самодостаточен —
-    не зависит от наличия репозитория Clusters). None — если чего-то нет.
-    pw_lock_sweep.sh кладётся рядом с provision-client.sh на узле (тот зовёт его через $DIR)."""
-    from core.scripts import BUNDLED_DIR
+    """Пути к вендоренным bash-примитивам (base, client, whitelist, sweep). None — чего-то нет."""
+    from core.scripts import BUNDLED_DIR   # ленивый импорт — уважает monkeypatch в тестах
     base, client, wl, sweep = (os.path.join(BUNDLED_DIR, f) for f in
                                ("provision-base.sh", "provision-client.sh",
                                 "whitelist-ip.sh", "pw_lock_sweep.sh"))
@@ -52,24 +79,17 @@ def _scripts() -> tuple[str, str, str, str] | None:
 
 
 def _read_pubkey() -> str | None:
-    """Публичный ключ vova (SSH_KEY + .pub) для раскладки authorized_keys на новом узле."""
     pub = config.SSH_KEY + ".pub"
     if not os.path.isfile(pub):
-        print(f"🛑 Нет публичного ключа {pub} — нужен для vova authorized_keys "
+        print(f"🛑 Нет публичного ключа {pub} — нужен для authorized_keys vova И root "
               f"(рядом с SSH_KEY={config.SSH_KEY})")
         return None
     return open(pub, encoding="utf-8").read().strip()
 
 
-async def _run_local(cmd: list[str], cwd: str) -> int:
-    """Локальный subprocess со стримингом вывода в лог-панель (stdout+stderr)."""
-    proc = await asyncio.create_subprocess_exec(
-        *cmd, cwd=cwd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
-    assert proc.stdout is not None
-    async for raw in proc.stdout:
-        print(raw.decode("utf-8", "replace").rstrip("\n"))
-    await proc.wait()
-    return proc.returncode if proc.returncode is not None else 1
+async def _field(prompt: str, default: str = "") -> str | None:
+    v = await ui.ask(prompt, default, cancelable=True)
+    return None if v is None else v.strip()
 
 
 async def run_setup_node(db: Database, ssh: SshClient, *, dry_run: bool = False) -> None:
@@ -78,18 +98,12 @@ async def run_setup_node(db: Database, ssh: SshClient, *, dry_run: bool = False)
     if not paths:
         return
     base_sh, client_sh, whitelist_sh, sweep_sh = paths
-    scripts_dir = os.path.dirname(base_sh)
     vova_pubkey = _read_pubkey()
     if vova_pubkey is None:
         return
 
-    # ── форма (у каждого поля есть «Отмена» → выход из мастера; ничего ещё не тронуто) ──
-    async def _field(prompt: str, default: str = "") -> str | None:
-        """Строковое поле формы с «Отмена». None = оператор отменил мастер (выше — return)."""
-        v = await ui.ask(prompt, default, cancelable=True)
-        return None if v is None else v.strip()
-
-    ip = await _field("IP нового узла")
+    # ── 1. IP (всегда спрашиваем первым) ──
+    ip = await _field("IP узла")
     if ip is None:
         print("Отмена.")
         return
@@ -98,134 +112,221 @@ async def run_setup_node(db: Database, ssh: SshClient, *, dry_run: bool = False)
     except ValueError:
         print(f"🛑 Некорректный IP: {ip!r}")
         return
-    dup = await db.find_node_by_ip(ip)
-    if dup:
-        print(f"🛑 Узел с IP {ip} уже в vocabulary.nodes "
-              f"(id={dup['id']}, {dup['server_name'] or dup['hostname']}). Отмена.")
-        return
-    hostname = await _field("Системный hostname (напр. n-node8)")
-    if hostname is None:
-        print("Отмена.")
-        return
-    if not hostname:
-        print("🛑 hostname обязателен.")
-        return
-    server_name = await _field("Имя ноды в системе (server_name — дисплей в отчётах)", hostname)
-    if server_name is None:
-        print("Отмена.")
-        return
-    password = await ui.ask("Пароль root нового узла (только первый коннект)", cancelable=True)
-    if password is None:
-        print("Отмена.")
-        return
-    if not dry_run and not password:
-        print("🛑 Нужен пароль root для первого (парольного) коннекта.")
-        return
 
-    print(f"\n{tag}━━━ Настройка узла: {server_name} ({hostname}) @ {ip} ━━━\n")
-
-    # ── 0. базовый bootstrap (пароль) ──
-    base_cmd = (f"bash {_REMOTE_BASE} --hostname {shlex.quote(hostname)} "
-                f"--vova-pubkey {shlex.quote(vova_pubkey)}")
-    if dry_run:
-        print(f"{tag}0. bootstrap root@{ip} (пароль): upload {base_sh} → {_REMOTE_BASE}; run:\n   {base_cmd}")
-    elif await ssh.ping(ip):
-        print(f"⏩ key-доступ vova@{ip} уже есть — базовый bootstrap пропускаю (повторный прогон).")
+    # ── 2. журнал: resume или первый запуск ──
+    journal = setup_state.load(ip)
+    if journal:
+        done = [s for s, v in journal.get("steps", {}).items() if v == setup_state.DONE]
+        print(f"\n📒 Журнал найден: {journal['server_name']} ({journal['hostname']}), "
+              f"тип={journal['node_type']}. Выполнено шагов: {len(done)}. Продолжаю с незакрытых.")
+        hostname = journal["hostname"]
+        server_name = journal["server_name"]
+        node_type = journal["node_type"]
     else:
-        print(f"━━━ 0/6 базовый bootstrap (root@{ip} по паролю) ━━━")
-        r = await ssh.bootstrap_run(ip, password, [(base_sh, _REMOTE_BASE)],
-                                    base_cmd, config.SETUP_BOOTSTRAP_TIMEOUT, echo=print)
-        if not r.ok:
-            print(f"🛑 base bootstrap не удался: {r.stderr or ('exit ' + str(r.exit_status))}")
+        # первый запуск — опрашиваем и СРАЗУ пишем журнал (повторно спрашивать не будем)
+        existing = await db.find_node_by_ip(ip)
+        hostname = await _field("Системный hostname (напр. n-node8)",
+                                (existing or {}).get("hostname", ""))
+        if hostname is None:
+            print("Отмена.")
             return
-
-    # ── 1. диалог типа ──
-    idx = await ui.select(
-        "Тип ноды:",
-        ["Обычный узел (Playwright/боты, claster=false)", "Элемент кластера (Patroni/etcd)"],
-        details=["haproxy_client + Watchdog + регистрация", "⛧ в разработке (фаза 2)"],
-    )
-    if idx is None:
-        print("Отмена (база настроена).")
-        return
-    if idx == 1:
-        # ФАЗА 2: член кластера (Patroni/etcd) — пошаговый визард (база уже настроена выше).
-        from core.setup_cluster_member import run_setup_cluster_member
-        await run_setup_cluster_member(db, ssh, new_ip=ip, hostname=hostname, dry_run=dry_run)
-        return
-
-    # ── ОБЫЧНЫЙ УЗЕЛ ──
-    # 2. ролевой client-хвост (по ключу root)
-    client_cmd = f"bash {_REMOTE_CLIENT} --tail-only"
-    if dry_run:
-        print(f"{tag}2. upload {client_sh} → {ip}:{_REMOTE_CLIENT} "
-              f"(+ {sweep_sh} → {_REMOTE_SWEEP}); run({_PRIV}): {client_cmd}")
-    else:
-        print("━━━ 2/6 ролевой client-хвост (haproxy_client) ━━━")
-        # pw_lock_sweep.sh кладём РЯДОМ (provision-client установит его в /usr/local/bin через $DIR)
-        if not await ssh.upload(ip, sweep_sh, _REMOTE_SWEEP, user=_PRIV, mode=0o755):
-            print("🛑 Не удалось залить pw_lock_sweep.sh.")
+        if not hostname:
+            print("🛑 hostname обязателен.")
             return
-        if not await ssh.upload(ip, client_sh, _REMOTE_CLIENT, user=_PRIV, mode=0o755):
-            print("🛑 Не удалось залить provision-client.sh.")
+        server_name = await _field("Имя ноды (server_name — дисплей в отчётах)",
+                                   (existing or {}).get("server_name", "") or hostname)
+        if server_name is None:
+            print("Отмена.")
             return
-        r = await ssh.run_stream(ip, client_cmd, timeout=300, echo=print, user=_PRIV)
-        if not r.ok:
-            print(f"🛑 client-хвост не удался: {r.stderr or ('exit ' + str(r.exit_status))}")
+        idx = await ui.select(
+            "Тип ноды:",
+            ["Обычный узел (Playwright/боты, claster=false)", "Элемент кластера (Patroni/etcd)"],
+            details=["haproxy_client + Watchdog + регистрация", "фаза 2: пошаговый визард замены"],
+        )
+        if idx is None:
+            print("Отмена.")
             return
-
-    # 3. verify узла
-    if dry_run:
-        print(f"{tag}3. verify: ssh ping vova@{ip} + systemctl is-active haproxy_client")
-    else:
-        print("━━━ 3/6 проверка узла ━━━")
-        if not await ssh.ping(ip):
-            print(f"🛑 Нет key-доступа vova@{ip} после провижина — стоп.")
-            return
-        st = await ssh.run(ip, "systemctl is-active haproxy_client", user=_PRIV)
-        print(f"   haproxy_client: {st.stdout or st.stderr or '?'}")
-
-    # 4. whitelist — ПОКАЗАТЬ и прогнать по подтверждению
-    ports = config.SETUP_CLIENT_PORTS
-    wl_display = f"scripts/whitelist-ip.sh {ip} --ports \"{ports}\" --apply"
-    print(f"\n{tag}4. Whitelist IP на кластере (доступ узла к БД). Команда:\n   {wl_display}")
-    if not dry_run:
-        if await ui.confirm(f"Прогнать whitelist для {ip} (порты: {ports}) по всему флоту?"):
-            rc = await _run_local(["bash", whitelist_sh, ip, "--ports", ports, "--apply"],
-                                  cwd=scripts_dir)
-            print("   ✅ whitelist применён." if rc == 0 else f"   ⚠️ whitelist rc={rc} (проверь вывод).")
+        node_type = "cluster" if idx == 1 else "client"
+        if dry_run:
+            # dry-run НЕ персистит журнал — только in-memory для прохода по шагам.
+            journal = {"ip": ip, "hostname": hostname, "server_name": server_name,
+                       "node_type": node_type, "node_id": None, "steps": {}}
         else:
-            print("   ⏩ whitelist пропущен — прогони вручную ДО старта WD (иначе WD не достучится до БД).")
+            journal = setup_state.create(ip, hostname, server_name, node_type)
+            print(f"📒 Журнал заведён: logs/setup_node/{ip}.json")
 
-    # 5. регистрация в системе (поздняя — узел уже настроен)
-    node_id = None
-    if dry_run:
-        print(f"{tag}5. INSERT vocabulary.nodes(hostname={hostname}, ip={ip}, "
-              f"server_name={server_name}, claster=false)")
-    else:
-        print("━━━ 5/6 регистрация в системе ━━━")
+    print(f"\n{tag}━━━ Настройка узла: {server_name} ({hostname}) @ {ip} · тип={node_type} ━━━\n")
+
+    # ── 3. доступ: ключ (resume) или пароль (только для шага user на первом прогоне) ──
+    key_ok = False if dry_run else await ssh.ping(ip)
+    password = None
+    need_password = (not key_ok) and not setup_state.is_done(journal, "user")
+    if need_password and not dry_run:
+        password = await ui.ask("Пароль root узла (нужен только для шага 'user')", cancelable=True)
+        if password is None:
+            print("Отмена.")
+            return
+        if not password:
+            print("🛑 Нужен пароль root для первого коннекта (шаг 'user').")
+            return
+    elif key_ok:
+        print("⏩ key-доступ уже есть — пароль не требуется.")
+
+    # состояние прогона (мутируется по ходу)
+    ctx = {"key": key_ok, "uploaded": False}
+
+    async def _ensure_uploaded() -> bool:
+        if ctx["uploaded"]:
+            return True
+        if not await ssh.upload(ip, base_sh, _REMOTE_BASE, user=_PRIV, mode=0o755):
+            print("🛑 Не удалось залить provision-base.sh.")
+            return False
+        ctx["uploaded"] = True
+        return True
+
+    async def _run_base(step_id: str, timeout: int) -> bool:
+        args = f"--hostname {shlex.quote(hostname)} --vova-pubkey {shlex.quote(vova_pubkey)}"
+        cmd = f"bash {_REMOTE_BASE} --step {step_id} {args}"
+        if step_id == "user" and not ctx["key"]:
+            # единственный парольный коннект: заливает скрипт и кладёт ключи vova+root
+            r = await ssh.bootstrap_run(ip, password, [(base_sh, _REMOTE_BASE)], cmd, 300, echo=print)
+            if r.ok:
+                ctx["key"] = True          # ключи легли — дальше по ключу
+                ctx["uploaded"] = True
+            else:
+                print(f"🛑 {r.stderr or ('exit ' + str(r.exit_status))}")
+            return r.ok
+        if not await _ensure_uploaded():
+            return False
+        r = await ssh.run_stream(ip, cmd, timeout=timeout, echo=print, user=_PRIV)
+        if not r.ok:
+            print(f"🛑 {r.stderr or ('exit ' + str(r.exit_status))}")
+        return r.ok
+
+    # ── фазы клиента (Python-действия) ──
+    async def _act_client_tail() -> bool:
+        for local, remote in ((sweep_sh, _REMOTE_SWEEP), (client_sh, _REMOTE_CLIENT)):
+            if not await ssh.upload(ip, local, remote, user=_PRIV, mode=0o755):
+                print(f"🛑 Не удалось залить {os.path.basename(local)}.")
+                return False
+        r = await ssh.run_stream(ip, f"bash {_REMOTE_CLIENT} --tail-only",
+                                 timeout=300, echo=print, user=_PRIV)
+        if r.ok:
+            st = await ssh.run(ip, "systemctl is-active haproxy_client", user=_PRIV)
+            print(f"   haproxy_client: {st.stdout or st.stderr or '?'}")
+        return r.ok
+
+    async def _act_whitelist() -> bool:
+        ports = config.SETUP_CLIENT_PORTS
+        nodes = await db.get_online_nodes()
+        tmp = tempfile.mkdtemp(prefix="wl_setup_")
+        try:
+            shutil.copy(whitelist_sh, tmp)
+            with open(os.path.join(tmp, "_nodes.sh"), "w", encoding="utf-8") as f:
+                f.write(_gen_nodes_sh(nodes))
+            os.chmod(os.path.join(tmp, "whitelist-ip.sh"), 0o755)
+            rc = await _run_local(["bash", "whitelist-ip.sh", ip, "--ports", ports, "--apply"], cwd=tmp)
+            return rc == 0
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    async def _act_register() -> bool:
+        existing = await db.find_node_by_ip(ip)
+        if existing:
+            setup_state.set_field(journal, "node_id", existing["id"])
+            print(f"   ⏩ уже в vocabulary.nodes id={existing['id']}")
+            return True
         node_id = await db.create_node(hostname, ip, server_name, claster=False)
+        setup_state.set_field(journal, "node_id", node_id)
         print(f"   ✅ vocabulary.nodes id={node_id}")
+        return True
 
-    # 6. деплой Watchdog + запуск + online
-    if dry_run:
-        print(f"{tag}6. infra_deploy WD → узел → /health → is_online=true")
-    else:
-        print("━━━ 6/6 деплой Watchdog ━━━")
-        node = await db.find_node_by_ip(ip)          # свежая запись (id/server_name/claster)
+    async def _act_wd() -> bool:
+        node = await db.find_node_by_ip(ip)
+        if not node:
+            print("   🛑 узел не зарегистрирован (шаг register) — WD ставить некуда.")
+            return False
         res = await infra_deploy.deploy_component_to_node(ssh, node, component="WD")
         print_deploy_results([res])
         if res.ok:
-            await db.set_node_online(node_id, True)
+            await db.set_node_online(node["id"], True)
             print("   ✅ Watchdog развёрнут, узел online.")
-        else:
-            print(f"   ⚠️ WD-деплой не прошёл ({res.step}: {res.detail}). Узел зарегистрирован — "
-                  f"доставь WD вручную через ветку «Инфра-компонент».")
+            return True
+        print(f"   ⚠️ WD-деплой не прошёл ({res.step}: {res.detail}).")
+        return False
+
+    _CLIENT_STEPS = [
+        ("client_tail", "Ролевой client-хвост (haproxy_client)",
+         "provision-client.sh --tail-only: настраивает haproxy_client — доступ узла к БД кластера.",
+         _act_client_tail),
+        ("whitelist", "Whitelist по флоту",
+         f"Открывает на всех online-нодах UFW-allow с {ip} на порты «{config.SETUP_CLIENT_PORTS}» + "
+         f"fail2ban ignoreip. Без него WD не достучится до БД кластера.", _act_whitelist),
+        ("register", "Регистрация в vocabulary.nodes",
+         "INSERT узла (claster=false) — поздняя, только по здоровому узлу. Идемпотентно.",
+         _act_register),
+        ("wd", "Деплой Watchdog + online",
+         "Раскатывает WD (код+common+venv+юниты+.env); при успехе выставляет is_online=true.",
+         _act_wd),
+    ]
+
+    # ── единый шаговый цикл с диалогом + журналом ──
+    async def _do_step(step_id: str, title: str, explain: str, runner) -> str:
+        """Возврат: 'ok' | 'cancel' | 'fail'. Уже-done по журналу → авто-пропуск."""
+        if setup_state.is_done(journal, step_id):
+            print(f"⏩ [{title}] уже выполнен (журнал) — пропуск.")
+            return "ok"
+        prompt = f"{title}\n\n{explain}"
+        if dry_run:
+            print(f"{tag}шаг '{step_id}': {title}")
+            return "ok"
+        idx = await ui.select(prompt, ["Выполнить", "Пропустить", "Отмена мастера"],
+                              colors=["green", "teal", "red"])
+        if idx is None or idx == 2:
+            print("⏹ Отмена. Прогресс в журнале — перезапуск продолжит отсюда.")
+            return "cancel"
+        if idx == 1:
+            setup_state.set_step(journal, step_id, setup_state.SKIPPED)
+            print(f"⏭ [{title}] пропущен оператором.")
+            return "ok"
+        print(f"\n━━━ {title} ━━━")
+        try:
+            ok = await runner()
+        except Exception as e:                 # noqa: BLE001 — любой сбой шага фиксируем в журнал
+            logger.exception("шаг %s упал", step_id)
+            print(f"🛑 исключение: {e}")
+            ok = False
+        setup_state.set_step(journal, step_id, setup_state.DONE if ok else setup_state.FAILED)
+        if not ok:
+            print(f"🛑 [{title}] не удалось. Журнал сохранён — перезапуск продолжит отсюда.")
+        return "ok" if ok else "fail"
+
+    # base-шаги
+    for step_id, title, explain, is_long in _BASE_STEPS:
+        timeout = config.SETUP_BOOTSTRAP_TIMEOUT if is_long else 300
+        res = await _do_step(step_id, title, explain,
+                             lambda sid=step_id, to=timeout: _run_base(sid, to))
+        if res != "ok":
+            return
+
+    # ветка по типу
+    if node_type == "cluster":
+        print("\n━━━ Элемент кластера → фаза-2 визард ━━━")
+        if not dry_run:
+            from core.setup_cluster_member import run_setup_cluster_member
+            await run_setup_cluster_member(db, ssh, new_ip=ip, hostname=hostname, dry_run=dry_run)
+        return
+
+    # фазы клиента
+    for step_id, title, explain, runner in _CLIENT_STEPS:
+        res = await _do_step(step_id, title, explain, runner)
+        if res != "ok":
+            return
 
     audit.write({
-        "action": "setup-node", "type": "client", "dry_run": dry_run,
-        "ip": ip, "hostname": hostname, "server_name": server_name, "node_id": node_id,
-        "operator": getpass.getuser(),
+        "action": "setup-node", "type": node_type, "dry_run": dry_run,
+        "ip": ip, "hostname": hostname, "server_name": server_name,
+        "node_id": journal.get("node_id"), "operator": getpass.getuser(),
     })
     print(f"\n{tag}✅ Готово: {server_name} ({ip}) настроен как обычный узел.")
 

@@ -158,11 +158,19 @@ class FletUi:
             _CLR = {"green": ft.Colors.GREEN_700, "blue": ft.Colors.BLUE_700,
                     "red": ft.Colors.RED_700, "teal": ft.Colors.TEAL_600}
 
+            # Карточка: лейбл (жирный, переносится) + деталь второй строкой (не тултип) →
+            # длинные подписи влезают, пояснение видно. Ширина фикс, высота по контенту.
             def _btn(lab, on_click, color, tip=None):
+                inner = [ft.Text(lab, size=14, weight=ft.FontWeight.W_600,
+                                 color=ft.Colors.WHITE, no_wrap=False)]
+                if tip:
+                    inner.append(ft.Text(tip, size=11, no_wrap=False,
+                                         color=ft.Colors.with_opacity(0.85, ft.Colors.WHITE)))
                 return ft.Button(
-                    content=ft.Text(lab, size=13, color=ft.Colors.WHITE),
-                    bgcolor=_CLR.get(color), on_click=on_click,
-                    width=200, height=44, tooltip=tip)
+                    content=ft.Container(
+                        content=ft.Column(inner, spacing=3, tight=True),
+                        width=300, padding=ft.Padding(left=14, top=11, right=14, bottom=11)),
+                    bgcolor=_CLR.get(color), on_click=on_click, tooltip=tip)
 
             btns = [_btn(lab, choose(i),
                          colors[i] if colors and i < len(colors) else None,
@@ -170,7 +178,7 @@ class FletUi:
                     for i, lab in enumerate(labels)]
             if cancel_in_grid:
                 btns.append(_btn("✖ Отмена", choose(None), "red"))
-            grid = ft.Row(btns, wrap=True, spacing=8, run_spacing=8, width=632)
+            grid = ft.Row(btns, wrap=True, spacing=10, run_spacing=10, width=632)
             content = ft.Column([_rich(title, 18), grid],
                                 tight=True, spacing=16, width=650)
             dialog = ft.AlertDialog(

@@ -6,7 +6,7 @@
 """
 import asyncio
 
-from core import setup_node, ui
+from core import setup_node, setup_state, ui
 from settings import config
 
 
@@ -84,6 +84,8 @@ def _scaffold(tmp_path, monkeypatch, *, scripts=True, pubkey=True):
         (tmp_path / "id_nodes.pub").write_text("ssh-ed25519 AAAA vova@ws\n")
     monkeypatch.setattr(scripts_mod, "BUNDLED_DIR", str(sdir))
     monkeypatch.setattr(config, "SSH_KEY", str(key))
+    # изолировать resume-журнал в tmp (не писать в реальный logs/setup_node/)
+    monkeypatch.setattr(setup_state, "_DIR", str(tmp_path / "journal"))
 
 
 def _run(db, ssh, ui_backend, monkeypatch):
@@ -119,12 +121,14 @@ def test_invalid_ip_aborts(tmp_path, monkeypatch):
     assert db.calls == []                        # даже дубль-гард не трогали
 
 
-def test_duplicate_ip_aborts(tmp_path, monkeypatch):
+def test_duplicate_ip_idempotent(tmp_path, monkeypatch):
+    # Новая семантика: дубль в БД НЕ абортит мастер (шаг register идемпотентен). На первом
+    # запуске find зовётся для префилла hostname/server_name; в dry-run create не вызывается.
     _scaffold(tmp_path, monkeypatch)
     db = FakeDb(dup={"id": 5, "server_name": "OLD", "hostname": "old"})
     _run(db, FakeSsh(), FakeUi(["1.2.3.4", "n-node8", "N8", "pw"]), monkeypatch)
-    assert db.calls == [("find", "1.2.3.4")]     # дубль найден → стоп, create не звали
-    assert not any(c[0] == "create" for c in db.calls)
+    assert ("find", "1.2.3.4") in db.calls
+    assert not any(c[0] == "create" for c in db.calls)   # dry-run не пишет
 
 
 def test_dry_run_no_writes(tmp_path, monkeypatch):
@@ -148,6 +152,31 @@ def test_cancel_on_form_aborts(tmp_path, monkeypatch):
     # None из ask = нажата «Отмена» на поле IP → мастер выходит, БД не трогаем
     _run(db, FakeSsh(), FakeUi([None]), monkeypatch)
     assert db.calls == []
+
+
+def test_journal_roundtrip(tmp_path, monkeypatch):
+    monkeypatch.setattr(setup_state, "_DIR", str(tmp_path / "j"))
+    assert setup_state.load("7.7.7.7") is None
+    j = setup_state.create("7.7.7.7", "n7", "N7", "client")
+    assert setup_state.load("7.7.7.7")["hostname"] == "n7"
+    assert not setup_state.is_done(j, "user")
+    setup_state.set_step(j, "user", setup_state.DONE)
+    setup_state.set_field(j, "node_id", 213)
+    reloaded = setup_state.load("7.7.7.7")
+    assert reloaded["steps"]["user"] == "done"
+    assert reloaded["node_id"] == 213
+    assert setup_state.is_done(reloaded, "user")
+
+
+def test_resume_asks_only_ip(tmp_path, monkeypatch):
+    # Журнал уже есть → resume: спрашиваем ТОЛЬКО IP, данные берём из журнала (не переспрашиваем).
+    _scaffold(tmp_path, monkeypatch)
+    setup_state.create("9.9.9.9", "n-node9", "N9", "client")
+    db = FakeDb(dup=None)
+    audit_rec = _run(db, FakeSsh(), FakeUi(["9.9.9.9"]), monkeypatch)  # в очереди только IP
+    assert audit_rec.get("hostname") == "n-node9"      # из журнала, не спрошено
+    assert audit_rec.get("type") == "client"
+    assert not any(c[0] == "find" for c in db.calls)   # resume не префиллит через find
 
 
 def test_cluster_branch_enters_wizard(tmp_path, monkeypatch):
