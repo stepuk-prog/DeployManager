@@ -5,6 +5,14 @@
 ## 2026-07-23
 
 ### Added
+- **Реестр SSH-ключей флота** `assets/fleet_access/KEYS.md` + чистые имена в `operator_keys.pub`.
+  Аудит показал: на флоте 4 ключа, но 3 смысла прятались под `vlad@vlad-ubuntu`/PuTTY-именем
+  (DM-ключ Vlad'а, ServerManager2, + дубль). Канонизировано: `vlad-dm` / `servermanager2` /
+  `cluster_root@PRIMARY` / `root@primary-pq-f`; инвариант «один комментарий = один ключ».
+
+## 2026-07-23
+
+### Added
 - **«Настроить ноду» — пошаговый мастер с диалогами и resume-журналом.** Раньше base шёл одним
   bash-заходом (9 шагов разом, без диалогов), а при обрыве всё начиналось заново.
   - `provision-base.sh` рефакторен в step-функции + диспетчер `--step <id>` / `--list-steps`

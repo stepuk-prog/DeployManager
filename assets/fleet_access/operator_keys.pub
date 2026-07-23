@@ -1,11 +1,10 @@
 # Операторские SSH-ключи флота — ставятся в root+vova authorized_keys на КАЖДУЮ новую
-# ноду (шаг operator_access мастера «Настроить ноду»). Сверх твоего ключа (он приходит
-# отдельно через --vova-pubkey/provision). Источник: эталонная нода флота, 2026-07-23.
-# Формат: обычный authorized_keys (одна строка на ключ). Обновлять при ротации ключей.
+# ноду (шаг operator_access). Сверх ключа Vlad'а (vlad-dm, приходит через --vova-pubkey).
+# Канонический набор, чистые имена (23-07). Обновлять при ротации; см. реестр KEYS.md.
 #
-# cluster_root@PRIMARY — ED25519, ключ операторов/автоматизации (терминальный доступ коллеги).
-# root@primary-pq-f    — RSA-4096, операторский ключ флота.
+# servermanager2       — RSA, ключ бота ServerManager2 (PM). Без него PM не заходит под root.
+# cluster_root@PRIMARY — ED25519, автоматизация кластера + терминальный доступ коллеги.
+# root@primary-pq-f    — RSA, операторский ключ флота.
+ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQCnOwAVS1DgjXDKyJ95jEIuBch2HpTrM9a+nrs0XaTeUnyRdwjF+nRVSTy+aG4kfgXULHjd1FLJEqNBc1HC0UeP++/7j7CaXCCynVVg2u5bx/sJKGGfvCHgV/aJrt2ijTTvtk11Vzk/qZmihmb3ictDek8UB3Na2c55Jx+KFrUR5IOUWoI9DaBjWXUDnazyk8HNTmM9vuajJVfC6EWcY1c7TVa5vZqbGzr0Ohu29RMYn40uRzNrVYVm4FzH5RYlewfk59uqFauKBIFNsGAumA9jRUMjDu4Tb2/dQiRQ9SWAn4SmuzjfYQeyZQX7AvPfxs7j9lDtcinTGw9ozWW48rZQSz0iACZuEjSUNoXi+o/xMZ9fJ6tsiJ9AaivRlK43z2rSDci+040nlzExTCCH2QLMP3qspric9DPZWhVSYJlYAo4+TJZl4KF10ePqM54fO5ZrJMiDjxPwfuZpx4GoWwefAeo5utE19wbrCKhhpFwzJi9vAL+VdEkzhcNtZ8bQV1qB6GkH2mmis22oVGiH3etHAcnP+n3Z35PqC3qQXGlL8qbMv2+Y1vQZVPKieMKKa/qtBIzM+gVBMQL3xctIvln42K2c1K9MySWu0+C0oJPgtCDC8pRCxqIneEseMZqOuzT5yoXrs/xgotdkCuZfH4b7Og40CBDccfX5AYyNnA0aZQ== servermanager2
 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIE7aO+LHrQVIuhbvu3oGIzVNDT/vDdpxVpJo7yVA0fto cluster_root@PRIMARY
 ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQCw2I5lK8cJ3VbeoXZYbmFtl2xSQSHqhSaGJl3l06gwOhI2OKf/LnLCa+aGYhR4EprK1m3FPVXStkV1IMvKHwYMzzMYhA/TYwg1xQx6NcxB+xfaxs3fcb5vkruT49p6b2ZupJDReFgPB8i2AEIHOG7nTwRHTv9CygEYisG2a8xgQrjUcTxjLSRXtmClJstrjX6JjRb/4cYolGKOVxWG0sjKT24Aqkw+FhuscPnCRbQFVlksPNvHPtiLBPDMgnXtyVDM4qq/6ihlhNWlibFYqpZZX4Pag/01NDPfhA7hCFXleGQo5v/0wlhG0rQizpQAECxzKT5vGYzLSkA9BWX+sf2kl6GP6OHICbYoP2xIaBDFFjHJPB5KUpp1jCShU91rgk1KFyxGnPkXw9tpTvFRwiAQU+Bfi9WBp85MFYdDfeISssDEbQg3ghaVmClUmnuQ0fpj5Yeme3D3TJs9ht1r928cHLpEaxlgKVAo9Ux7hANK8RYx6H/m7aBoYwk+QsiUd1R1lFCiB7BvkvXUp8cu5s05ngXaSOksYHdroNXpM1n45BWYOzDkVd4/VhVe+SiGofDg241/UTrZc5Jkv0ys/pBo9i/dmz06NLyN7aVLGiFkzkGGwj9sxWGhRK5NrsAzMlbSNhuiFJytPmiZPBhwYgYQMW1/pvEQGRh8Sht0twMUlQ== root@primary-pq-f
-# ServerManager2 (PM2) — ключ бота управления сервисами (комментарий vlad@vlad-ubuntu, НО отдельный ключ от DM/id_rsa!). Без него PM не заходит под root.
-ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQCnOwAVS1DgjXDKyJ95jEIuBch2HpTrM9a+nrs0XaTeUnyRdwjF+nRVSTy+aG4kfgXULHjd1FLJEqNBc1HC0UeP++/7j7CaXCCynVVg2u5bx/sJKGGfvCHgV/aJrt2ijTTvtk11Vzk/qZmihmb3ictDek8UB3Na2c55Jx+KFrUR5IOUWoI9DaBjWXUDnazyk8HNTmM9vuajJVfC6EWcY1c7TVa5vZqbGzr0Ohu29RMYn40uRzNrVYVm4FzH5RYlewfk59uqFauKBIFNsGAumA9jRUMjDu4Tb2/dQiRQ9SWAn4SmuzjfYQeyZQX7AvPfxs7j9lDtcinTGw9ozWW48rZQSz0iACZuEjSUNoXi+o/xMZ9fJ6tsiJ9AaivRlK43z2rSDci+040nlzExTCCH2QLMP3qspric9DPZWhVSYJlYAo4+TJZl4KF10ePqM54fO5ZrJMiDjxPwfuZpx4GoWwefAeo5utE19wbrCKhhpFwzJi9vAL+VdEkzhcNtZ8bQV1qB6GkH2mmis22oVGiH3etHAcnP+n3Z35PqC3qQXGlL8qbMv2+Y1vQZVPKieMKKa/qtBIzM+gVBMQL3xctIvln42K2c1K9MySWu0+C0oJPgtCDC8pRCxqIneEseMZqOuzT5yoXrs/xgotdkCuZfH4b7Og40CBDccfX5AYyNnA0aZQ== vlad@vlad-ubuntu
