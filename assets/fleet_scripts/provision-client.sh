@@ -147,6 +147,35 @@ else
   echo "   ⚠️ $DIR/pw_lock_sweep.sh не найден — свип НЕ установлен (доставь вручную: install -m755 pw_lock_sweep.sh /usr/local/bin/)."
 fi
 
+step "Playwright lock-sweep → ночной таймер (ExecStartPre мало: бот живёт неделями)"
+# ExecStartPre свипает ТОЛЬКО при старте юнита, а бот крутится неделями — за это время маркер
+# <build>/DEPENDENCIES_VALIDATED успевает протухнуть (30 дней, kMaximumReValidationPeriod), и
+# следующий же launch (рестарт/пересоздание браузера) падает на висячем локе. Ночной прогон
+# держит маркеры свежими → Playwright вообще не идёт обходить каталог билда. Грабли 2026-08-02.
+cat > /etc/systemd/system/pw-lock-sweep.service <<'EOF'
+[Unit]
+Description=Playwright lock sweep (висячие firefox-lock + освежение DEPENDENCIES_VALIDATED)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/pw_lock_sweep.sh
+EOF
+cat > /etc/systemd/system/pw-lock-sweep.timer <<'EOF'
+[Unit]
+Description=Ночной Playwright lock sweep
+
+[Timer]
+OnCalendar=*-*-* 04:20:00
+RandomizedDelaySec=1800
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+systemctl daemon-reload
+systemctl enable --now pw-lock-sweep.timer >/dev/null 2>&1 && echo "   ✅ pw-lock-sweep.timer (ежедневно ~04:20)" \
+  || echo "   ⚠️ pw-lock-sweep.timer не включился"
+
 echo -e "\n${G}✅ Клиентский узел настроен.${N}"
 echo "Дальше: 1) на кластере открыть этому IP доступ — scripts/whitelist-ip.sh <этот_IP> --apply"
 echo "        2) зарегистрировать в vocabulary.nodes (claster=f) и развернуть watchdog (см. node_replacement.md шаг 8)"
