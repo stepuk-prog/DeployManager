@@ -24,7 +24,8 @@ logger = get_logger(__name__)
 async def update(ssh: SshClient, db: Database, project_dir: str, remote_folder: str,
                  local_svcs: list, records: list, local, nodes: list,
                  stale: list[dict], dry_run: bool = False) -> None:
-    """stale — [{ip, name, commit, lag}] из dashboard.show."""
+    """stale — [{ip, name, commit, lag, unknown}] из dashboard.show: отставшие ноды плюс те,
+    у кого версию выяснить не удалось (`unknown=True`, `commit=None`)."""
     stale_ips = {s["ip"] for s in stale}
     targets = [n for n in nodes if n["ip_address"] in stale_ips]
     offline = stale_ips - {n["ip_address"] for n in targets}
@@ -41,6 +42,13 @@ async def update(ssh: SshClient, db: Database, project_dir: str, remote_folder: 
     for n in targets:
         name = n["server_name"] or n["hostname"]
         print(f"  • {name:16} ({n['ip_address']})  сейчас: {lag_by_ip.get(n['ip_address'], '?')}")
+    # Ноды с невыясненной версией — отдельной строкой (2026-08-15): их состояние мы НЕ знаем,
+    # а не «оно актуальное». Раньше дашборд их молча выбрасывал, и число нод в подтверждении
+    # ниже оказывалось занижено — так BinoOptions уехал на 5 нод из 7.
+    unknown = [s for s in stale if s.get("unknown") and s["ip"] in {n["ip_address"] for n in targets}]
+    if unknown:
+        print(f"  ⚠️ Версия не выяснена (беру в синхронизацию): "
+              f"{', '.join(s['name'] for s in unknown)}")
     if local.dirty:
         print("  ⚠️⚠️ Локально есть незакоммиченные изменения (DIRTY) — версия на ноде будет неточной.")
     if not dry_run and not await ui.confirm(
