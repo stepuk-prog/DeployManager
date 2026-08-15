@@ -60,8 +60,22 @@ async def _poll_outcome(db: Database, request_id: int, command: str, service_nam
 
 
 async def manage(db: Database, project_dir: str, command: str | None = None,
-                 poll_timeout: int = _POLL_TIMEOUT) -> None:
-    """Подать команду сервису через GlobalDispatcher (§13). Размещение — за GD."""
+                 poll_timeout: int = _POLL_TIMEOUT, dry_run: bool = False) -> None:
+    """Подать команду сервису через GlobalDispatcher (§13). Размещение — за GD.
+
+    dry_run — только печать намерения, без записи в БД (2026-08-15). Раньше флаг сюда не
+    доезжал: `--dry-run` честно ничего не менял в деплое, но эта ветка всё равно уходила в
+    `submit_control_request` и РЕАЛЬНО дёргала боевой сервис. Спасал только CHECK на
+    source='dm' — пока его не починили, предпросмотр падал вместо перезапуска.
+
+    Неинтерактивный режим (`--yes`) сюда не заходит без явной `command`: `ui.select` без TTY
+    возвращает `default_index`, то есть молча взял бы ПЕРВУЮ программу проекта и restart по
+    умолчанию — не то, что оператор имел в виду, запуская пакетное обновление версий.
+    """
+    if not ui.INTERACTIVE and not command:
+        print("  ⏭️  Управление сервисом пропущено: неинтерактивный режим без явной --command "
+              "(иначе выбор программы и команды взялся бы по умолчанию).")
+        return
     local_svcs = [s for s in list_local_services(project_dir) if not s.is_template]
     records = await db.find_programs_by_service([s.name for s in local_svcs])
     if not records:
@@ -114,6 +128,11 @@ async def manage(db: Database, project_dir: str, command: str | None = None,
                                 f"{rec['service_name']} (на лидере). Продолжить?"):
             print("  ⏭️  Отменено.")
             return
+
+    if dry_run:
+        print(f"  [DRY-RUN] {command} {rec['service_name']} → control_request (source=dm); "
+              f"диспетчер был бы включён при необходимости. Ничего не отправлено.")
+        return
 
     # Включить диспетчера: GD управляет только dispatcher=true (иначе NonDispatcher).
     enabled = await db.enable_dispatcher(rec["program_id"])

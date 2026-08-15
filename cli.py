@@ -629,7 +629,7 @@ async def run(args=None):
             return
         if action == "manage":     # служебное: start/stop/restart через GD (§13 control_request)
             from core import watchdog
-            await watchdog.manage(db, project_dir, command=getattr(args, "command", None))
+            await watchdog.manage(db, project_dir, command=getattr(args, "command", None), dry_run=dry_run)
             return
         if action == "uninstall":  # деструктивное: снять с ноды (только свои service_name)
             from core import uninstall
@@ -673,7 +673,7 @@ async def run(args=None):
                                      dry_run=dry_run)
             if await ui.confirm("Управление сервисом (start/stop/restart через диспетчер)?"):
                 from core import watchdog
-                await watchdog.manage(db, project_dir)
+                await watchdog.manage(db, project_dir, dry_run=dry_run)
             return
 
         nodes = await db.get_online_nodes()
