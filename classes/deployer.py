@@ -158,14 +158,21 @@ class Deployer:
         """Для юнитов браузер-ботов — drop-in `10-pw-lock-sweep.conf` на КАЖДЫЙ юнит:
           ExecStartPre=-/usr/local/bin/pw_lock_sweep.sh  (свип висячего firefox-lock,
             роняющего launch(); `-` = best-effort, фейл свипа не блокирует старт)
-          KillMode=mixed + TimeoutStopSec=30  (аккуратно гасим дерево firefox, не по SIGKILL).
+          KillMode=mixed + TimeoutStopSec=150 (аккуратно гасим дерево firefox, не по SIGKILL).
+        Про 150 (2026-08-18): это ПОТОЛОК, а не пауза — вышел раньше, systemd идёт дальше сразу.
+        Прежние 30 с были меньше суммы бюджетов graceful-выхода браузерных ботов (~125 с:
+        браузер 50 + логгер 15 + юзербот/БД/media по 10) → SIGKILL прилетал штатно. Хуже того,
+        этот drop-in ПЕРЕБИВАЕТ значение из самого юнита, поэтому каждая новая раскатка молча
+        получала 30 с, даже если в юните стояло 90. Согласовано с WD: его потолок stop-верификации
+        = post_stop_verify_sec + VERIFY_BUFFER_SEC(20), у тяжёлых программ 150+20=170 — то есть
+        добивание systemd на 150-й секунде успевает попасть в вердикт WD.
         Идемпотентно (перезапись). Раньше — ручной node-level drop-in на 752 юнита."""
         if not service_files:
             return True
         conf = ("[Service]\n"
                 "ExecStartPre=-/usr/local/bin/pw_lock_sweep.sh\n"
                 "KillMode=mixed\n"
-                "TimeoutStopSec=30\n")
+                "TimeoutStopSec=150\n")
         b64 = base64.b64encode(conf.encode("utf-8")).decode("ascii")
         cmds = []
         for name in service_files:
