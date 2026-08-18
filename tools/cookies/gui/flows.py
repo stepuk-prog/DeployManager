@@ -333,7 +333,9 @@ async def binodex_flow(ctx: FlowContext, account: dict, mode: str, on_saved=None
         await bnd.open_and_send_email(session.page, sel, mail)
 
         wiz.status("Жду код Privy на почте…")
-        code = await asyncio.to_thread(imap_code.wait_for_code, conn, baseline)
+        # Соединение может быть пересоздано внутри ожидания (Gmail роняет сессию транзиентно) —
+        # забираем актуальное, иначе чистка писем и logout ниже пошли бы по мёртвому объекту.
+        code, conn = await asyncio.to_thread(imap_code.wait_for_code, conn, baseline, mail, app_pass)
         wiz.status(f"Код получен: {code}")
         await bnd.enter_code(session.page, sel, code)
 

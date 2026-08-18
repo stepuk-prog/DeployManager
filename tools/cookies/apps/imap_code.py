@@ -57,16 +57,48 @@ def _extract_code(conn: imaplib.IMAP4_SSL, uid: int) -> str | None:
     return None
 
 
-def wait_for_code(conn: imaplib.IMAP4_SSL, baseline: set[int]) -> str:
+# Сколько раз переподключаемся к Gmail внутри одного ожидания кода. Gmail умеет уронить сессию
+# транзиентно — imaplib отдаёт это как `abort: command: NOOP => System Error`, и объект соединения
+# после такого мёртв. Раньше исключение улетало наверх и рвало ВЕСЬ авто-логин: браузер оставался
+# открытым, оператор доделывал вход руками, хотя код в ящик приходил штатно.
+IMAP_RECONNECT_MAX = 3
+
+
+def wait_for_code(conn: imaplib.IMAP4_SSL, baseline: set[int],
+                  mail: str = "", app_pass: str = "") -> tuple[str, imaplib.IMAP4_SSL]:
     """Первое письмо с кодом ПОСЛЕ запроса (uid не из baseline) — старые коды (живут 10 мин,
-    их в ящике несколько) игнорируем. Таймаут — RuntimeError."""
+    их в ящике несколько) игнорируем. Таймаут — RuntimeError.
+
+    Возвращает (код, соединение): соединение может быть ПЕРЕСОЗДАНО по ходу ожидания, поэтому
+    вызывающий обязан продолжать работать с возвращённым объектом (им же чистятся письма и
+    делается logout) — старый после обрыва непригоден.
+
+    `mail`/`app_pass` нужны только для переподключения; без них (пустые) ведём себя как раньше —
+    первый же обрыв уходит наверх."""
     deadline = time.monotonic() + PRIVY_CODE_WAIT_SECONDS
+    reconnects = 0
     while time.monotonic() < deadline:
-        conn.noop()
-        for uid in sorted(set(privy_uids(conn)) - baseline, reverse=True):
-            code = _extract_code(conn, uid)
-            if code:
-                return code
+        try:
+            conn.noop()
+            for uid in sorted(set(privy_uids(conn)) - baseline, reverse=True):
+                code = _extract_code(conn, uid)
+                if code:
+                    return code, conn
+        except (imaplib.IMAP4.abort, imaplib.IMAP4.error, OSError) as error:
+            # Транзиент Gmail: соединение мертво, но код в ящик придёт (или уже пришёл).
+            # Пересоздаём сессию и продолжаем ждать в пределах того же дедлайна.
+            if not (mail and app_pass) or reconnects >= IMAP_RECONNECT_MAX:
+                raise
+            reconnects += 1
+            logger.warning("IMAP оборвался (%s) — переподключаюсь (%s/%s)",
+                           error, reconnects, IMAP_RECONNECT_MAX)
+            try:
+                conn.logout()
+            except (Exception,):
+                pass
+            time.sleep(PRIVY_CODE_POLL_EVERY)
+            conn = imap_connect(mail, app_pass)
+            continue
         time.sleep(PRIVY_CODE_POLL_EVERY)
     raise RuntimeError(f"код Privy не пришёл за {PRIVY_CODE_WAIT_SECONDS}с")
 
