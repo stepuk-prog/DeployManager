@@ -49,6 +49,10 @@ _BASE_STEPS = [
      "Генерирует локали ru_RU/en_US — критично для совместимости с кластером.", False),
     ("packages", "Базовые пакеты (apt)",
      "Ставит build-стек, сеть и утилиты: git/curl/ufw/fail2ban/build-essential/ethtool/…", True),
+    ("browser_deps", "Системные библиотеки для браузеров",
+     "Ставит libs, без которых Playwright-браузер не стартует («Host system is missing "
+     "dependencies to run browsers»). Сам браузер тянет деплой проекта, а libs — свойство узла. "
+     "Пробел вскрыт 20-08-2026 на NODE-8: боты приехали failover'ом и падали на launch().", True),
     ("python311", "Python 3.11 (deadsnakes)",
      "Ставит python3.11 — venv-стандарт флота для WD/GD/CD (на Ubuntu 24.04 дефолт 3.12, "
      "без 3.11 деплой WD падает).", True),

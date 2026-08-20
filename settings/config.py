@@ -132,4 +132,7 @@ PYTHON_BIN = os.getenv("PYTHON_BIN", "python3.11")   # интерпретато�
 VENV_DIR = os.getenv("VENV_DIR", "venv")             # имя venv в каталоге проекта (на сервере)
 # Браузер для playwright (если он есть в requirements) — предлагается доустановить.
 PLAYWRIGHT_BROWSER = os.getenv("PLAYWRIGHT_BROWSER", "firefox")
+# Браузеры для post-install деплоя проекта: флоту нужны оба (chromium — страницы
+# binodex, firefox — TradingView). Каждая версия playwright тянет свой build id.
+PLAYWRIGHT_BROWSERS = os.getenv("PLAYWRIGHT_BROWSERS", "chromium firefox")
 PROVISION_TIMEOUT = int(os.getenv("PROVISION_TIMEOUT", "900"))  # сек (pip + загрузка браузера)

@@ -13,8 +13,9 @@ def test_requirement_names(tmp_path):
 
 
 def test_detect_playwright(tmp_path):
+    # Ставим ОБА браузера: chromium — страницы binodex, firefox — TradingView (20-08-2026).
     det = detect_post_install(_req(tmp_path, "playwright==1.57.0\nasyncpg~=0.30\n"))
-    assert ("playwright", "playwright install firefox") in det
+    assert ("playwright", "playwright install chromium firefox") in det
 
 
 def test_detect_none(tmp_path):

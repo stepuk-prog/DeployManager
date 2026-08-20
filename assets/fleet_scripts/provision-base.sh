@@ -24,7 +24,7 @@ while [[ $# -gt 0 ]]; do case "$1" in
   --hostname) HOSTNAME_NEW="$2"; shift 2 ;;
   --vova-pubkey) VOVA_PUBKEY="$2"; shift 2 ;;
   --step) STEP="$2"; shift 2 ;;
-  --list-steps) printf '%s\n' user hostname locales packages python311 sshd fail2ban ufw dropins haproxy; exit 0 ;;
+  --list-steps) printf '%s\n' user hostname locales packages browser_deps python311 sshd fail2ban ufw dropins haproxy; exit 0 ;;
   *) echo "неизвестный аргумент: $1"; exit 2 ;;
 esac; done
 
@@ -91,6 +91,29 @@ step_packages() {
   step "пакеты (build-стек, сеть, утилиты)"
   apt-get install -y -qq vim tmux htop git curl wget unzip tree socat netcat-openbsd \
     jq dos2unix net-tools ethtool build-essential libssl-dev libpcre3-dev zlib1g-dev rsyslog ufw fail2ban needrestart
+}
+
+step_browser_deps() {
+  step "системные библиотеки для браузеров Playwright"
+  # Playwright тянет сам БРАУЗЕР, но не системные libs — на чистой 24.04 firefox/chromium
+  # стартовать не могут: «Host system is missing dependencies to run browsers».
+  # Ловилось 20-08-2026 на NODE-8: боты приехали failover'ом и падали пачками при launch().
+  # Имена части пакетов на 24.04 с суффиксом t64, на 22.04 — без него; ставим то, что есть
+  # в индексе apt, отсутствующие молча пропускаем (шаг идемпотентен и переносим между релизами).
+  export DEBIAN_FRONTEND=noninteractive
+  local want="libxcb-shm0 libx11-xcb1 libxcb1 libxrandr2 libxcomposite1 libxcursor1 libxdamage1
+    libxfixes3 libxi6 libxrender1 libxkbcommon0 libxss1 libdrm2 libgbm1 libnss3 libnspr4
+    libpango-1.0-0 libpangocairo-1.0-0 libcairo2 libcairo-gobject2 libgdk-pixbuf-2.0-0
+    libgtk-3-0t64 libgtk-3-0 libasound2t64 libasound2 libatk1.0-0t64 libatk1.0-0
+    libatk-bridge2.0-0t64 libatk-bridge2.0-0 libatspi2.0-0t64 libatspi2.0-0 libdbus-glib-1-2"
+  local have=""
+  for pkg in $want; do
+    apt-cache policy "$pkg" 2>/dev/null | grep -q "Candidate: (none)" && continue
+    apt-cache policy "$pkg" 2>/dev/null | grep -q "Candidate:" && have="$have $pkg"
+  done
+  [[ -z "$have" ]] && { echo "  (в индексе apt нет ни одного пакета из списка — пропускаю)"; return 0; }
+  apt-get install -y -qq $have
+  echo "  поставлено пакетов: $(echo $have | wc -w)"
 }
 
 step_python311() {
@@ -245,7 +268,7 @@ step_haproxy() {
 # Диспетчер: один шаг (--step) или все подряд (standalone).
 # Порядок ВАЖЕН: user первым (кладёт ключи) → дальше остальное.
 # ─────────────────────────────────────────────────────────────────────────────
-ALL_STEPS=(user hostname locales packages python311 sshd fail2ban ufw dropins haproxy)
+ALL_STEPS=(user hostname locales packages browser_deps python311 sshd fail2ban ufw dropins haproxy)
 
 run_step() {
   case "$1" in
@@ -253,6 +276,7 @@ run_step() {
     hostname) step_hostname ;;
     locales) step_locales ;;
     packages) step_packages ;;
+    browser_deps) step_browser_deps ;;
     python311) step_python311 ;;
     sshd) step_sshd ;;
     fail2ban) step_fail2ban ;;

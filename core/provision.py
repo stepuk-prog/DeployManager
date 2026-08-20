@@ -9,8 +9,12 @@ import re
 from settings import config
 
 # имя пакета (lower) → команда отдельной установки (внутри venv, без 'venv/bin/')
+# Семья binodex ходит и в chromium (страницы binodex), и в firefox (TradingView и прочее),
+# причём КАЖДАЯ версия playwright тянет свой build id. На старых нодах кэш давно набит и
+# `playwright install` выглядит no-op, но на свежем сервере браузеров нет вовсе — 20-08-2026
+# на NODE-8 боты падали «Please run the following command to download new browsers».
 _POST_INSTALL = {
-    "playwright": lambda: f"playwright install {config.PLAYWRIGHT_BROWSER}",
+    "playwright": lambda: f"playwright install {config.PLAYWRIGHT_BROWSERS}",
 }
 
 
