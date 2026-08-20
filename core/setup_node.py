@@ -323,6 +323,23 @@ async def run_setup_node(db: Database, ssh: SshClient, *, dry_run: bool = False)
         print(f"   ⚠️ WD-деплой не прошёл ({res.step}: {res.detail}).")
         return False
 
+    async def _act_dispatcherctl() -> bool:
+        # DispatcherCtl (`nodes="all"`) несёт CLI-обёртку /usr/local/bin/dispatcherctl. Раньше
+        # мастер его не ставил, и на свежей ноде обёртки не было (VIDEO-3 23-07, NODE-8 20-08) —
+        # добиваем здесь, на одну ноду. Через `--action infra` нельзя: там нет фильтра по узлу,
+        # компонент поехал бы на ВЕСЬ флот, а он может быть на другой версии.
+        node = await db.find_node_by_ip(ip)
+        if not node:
+            print("   🛑 узел не зарегистрирован (шаг register) — DispatcherCtl ставить некуда.")
+            return False
+        res = await infra_deploy.deploy_component_to_node(ssh, node, component="DispatcherCtl")
+        print_deploy_results([res])
+        if res.ok:
+            print("   ✅ DispatcherCtl развёрнут (обёртка /usr/local/bin/dispatcherctl в PATH).")
+            return True
+        print(f"   ⚠️ DispatcherCtl не встал ({res.step}: {res.detail}).")
+        return False
+
     _CLIENT_STEPS = [
         ("client_tail", "Ролевой client-хвост (haproxy_client)",
          "provision-client.sh --tail-only: настраивает haproxy_client — доступ узла к БД кластера.",
@@ -336,6 +353,10 @@ async def run_setup_node(db: Database, ssh: SshClient, *, dry_run: bool = False)
         ("wd", "Деплой Watchdog + online",
          "Раскатывает WD (код+common+venv+юниты+.env); при успехе выставляет is_online=true.",
          _act_wd),
+        ("dispatcherctl", "Деплой DispatcherCtl (CLI оператора)",
+         "Ставит /opt/DispatcherCtl + обёртку /usr/local/bin/dispatcherctl. На бот-ноде это "
+         "read-only режим (rank/show) — leader-команды скрыты. Юнитов нет, ничего не рестартует.",
+         _act_dispatcherctl),
     ]
 
     # ── единый шаговый цикл с диалогом + журналом ──
