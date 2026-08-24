@@ -209,12 +209,26 @@ def _render_env(base_text: str, node, node_env: dict) -> str:
 
 
 async def _write_env(ssh: SshClient, host: str, remote_folder: str, text: str) -> bool:
-    """Записать отрендеренный .env → remote_folder/.env под vova, chmod 600 (секреты)."""
+    """Записать отрендеренный .env → remote_folder/.env под vova, chmod 600 (секреты).
+
+    Если .env на ноде остался от РУЧНОЙ установки под root (root:root 600), запись под
+    vova упирается в EACCES — а сам компонент потом не читает свой конфиг (2026-07-29:
+    `dispatcherctl` под vova падал PermissionError на 12 нодах). Поэтому на провале —
+    один раз нормализуем владельца под root (vova:vova 600) и повторяем запись.
+    """
     b64 = base64.b64encode(text.encode("utf-8")).decode("ascii")
     dst = shlex.quote(os.path.join(remote_folder, ".env"))
     inner = f"echo {b64} | base64 -d > {dst} && chmod 600 {dst}"
     res = await ssh.run(host, f"sh -c {shlex.quote(inner)}", timeout=15)
-    return res.ok
+    if res.ok:
+        return True
+    owner = shlex.quote(f"{config.SSH_USER}:{config.SSH_USER}")
+    fix = await ssh.run_priv(host, f"sh -c {shlex.quote(f'chown {owner} {dst} && chmod 600 {dst}')}",
+                             timeout=15)
+    if not fix.ok:
+        return False
+    print(f"  ⚙️ {host}: .env был не под {config.SSH_USER} — владелец нормализован")
+    return (await ssh.run(host, f"sh -c {shlex.quote(inner)}", timeout=15)).ok
 
 
 # ── systemd на ноде (root) ──
