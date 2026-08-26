@@ -29,7 +29,7 @@ while [[ $# -gt 0 ]]; do case "$1" in
 esac; done
 
 # IP узлов кластера (источник правды — ConfigFiles/nodes.md)
-CLUSTER1=190.2.151.183; CLUSTER2=2.58.67.41; CLUSTER3=91.219.61.76
+CLUSTER1=190.2.151.183; CLUSTER2=2.58.67.41; CLUSTER3=146.59.70.67
 G='\033[0;32m'; N='\033[0m'
 step(){ echo -e "\n${G}━━━ $* ━━━${N}"; }
 
