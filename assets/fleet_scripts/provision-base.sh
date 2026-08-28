@@ -132,6 +132,15 @@ step_sshd() {
   sshd_set(){ grep -qE "^$1 " /etc/ssh/sshd_config && sed -i "s/^$1 .*/$1 $2/" /etc/ssh/sshd_config || echo "$1 $2" >> /etc/ssh/sshd_config; }
   sshd_set MaxSessions 10; sshd_set MaxStartups 10
   sshd_set ClientAliveInterval 30; sshd_set ClientAliveCountMax 10
+  # root — только по ключу, пароли выключены. Через drop-in, а НЕ правкой sshd_config:
+  # 50-cloud-init.conf ставит PasswordAuthentication yes, а в sshd побеждает ПЕРВОЕ
+  # вхождение директивы, поэтому имя файла начинается с 00-. Без этого нода уезжает
+  # в прод с открытым паролем (так вышло с node-7 20-08 и video3 — 11678 попыток подбора).
+  cat > /etc/ssh/sshd_config.d/00-harden-root.conf <<'HARDEOF'
+PermitRootLogin without-password
+PasswordAuthentication no
+HARDEOF
+  sshd -t
   systemctl restart ssh 2>/dev/null || systemctl restart sshd
 }
 
