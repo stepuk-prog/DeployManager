@@ -53,7 +53,7 @@ class Database(TelegramMixin):
                     host=config.PG_HOST, port=config.PG_PORT, database=config.PG_DATABASE,
                     min_size=self.min_size, max_size=self.max_size,
                     statement_cache_size=0,   # обязательно для PgBouncer transaction mode
-                    timeout=config.SSH_CONNECT_TIMEOUT, command_timeout=15,
+                    timeout=config.PG_CONNECT_TIMEOUT, command_timeout=15,
                 ))
                 logger.info("БД %s подключена (PgBouncer %s:%s, пул min=%s max=%s)",
                             config.PG_DATABASE, config.PG_HOST, config.PG_PORT,

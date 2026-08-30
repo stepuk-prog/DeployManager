@@ -17,6 +17,9 @@ PG_HOST = os.getenv("PG_HOST", "localhost")
 PG_USER = os.getenv("PG_USER")
 PG_PASSWORD = os.getenv("PG_PASSWORD")
 PG_PORT = int(os.getenv("PG_PORT", "6442"))
+# Таймаут установления соединения с БД. Свой, а не SSH-ный: у них разные причины
+# долго ждать (моргающий линк ноды против занятого PgBouncer).
+PG_CONNECT_TIMEOUT = int(os.getenv("PG_CONNECT_TIMEOUT", "10"))
 
 # ----- Telegram Desktop клиенты (суб-инструмент «Юзерботы (сессии)») -----
 # TELEGRAM_APPS="<поле-FK в telegram.telegram>,<таблица-справочник в схеме telegram>".
@@ -30,7 +33,8 @@ TG_APPS_TABLE = _tg_apps[1] if len(_tg_apps) > 1 and _tg_apps[1] else "telegram_
 SSH_USER = os.getenv("SSH_USER", "vova")
 SSH_KEY = str(Path(os.getenv("SSH_KEY", "~/.ssh/id_nodes")).expanduser())
 SSH_PORT = int(os.getenv("SSH_PORT", "22"))
-SSH_CONNECT_TIMEOUT = int(os.getenv("SSH_CONNECT_TIMEOUT", "10"))
+# 25с, а не 10: у node-2 моргает линк, и на 10с DeployManager давал ложные ⛔ на живом узле.
+SSH_CONNECT_TIMEOUT = int(os.getenv("SSH_CONNECT_TIMEOUT", "25"))
 # rsync: таймаут бездействия I/O (сек) — обрывает зависшую передачу, чтобы деплой не висел вечно.
 RSYNC_TIMEOUT = int(os.getenv("RSYNC_TIMEOUT", "120"))
 # Пользователь для привилегированных шагов (юниты в /etc, systemctl). Если задан
