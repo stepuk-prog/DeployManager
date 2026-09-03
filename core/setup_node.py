@@ -290,7 +290,7 @@ async def run_setup_node(db: Database, ssh: SshClient, *, dry_run: bool = False)
 
     async def _act_whitelist() -> bool:
         ports = config.SETUP_CLIENT_PORTS
-        nodes = await db.get_online_nodes()
+        nodes = await db.get_fleet_nodes()
         tmp = tempfile.mkdtemp(prefix="wl_setup_")
         try:
             shutil.copy(whitelist_sh, tmp)

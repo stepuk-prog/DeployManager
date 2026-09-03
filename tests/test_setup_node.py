@@ -45,6 +45,9 @@ class FakeDb:
     async def set_node_online(self, node_id, online=True):
         self.calls.append(("online", node_id, online))
 
+    async def get_fleet_nodes(self):    # реестр целиком, без фильтра is_online
+        return await self.get_online_nodes()
+
     async def get_online_nodes(self):   # для визарда фазы-2 (член кластера)
         return [
             {"id": 1, "hostname": "cluster1", "server_name": "cluster1",

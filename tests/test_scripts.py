@@ -47,6 +47,9 @@ class FakeDb:
     async def get_online_nodes(self):
         return self._nodes
 
+    async def get_fleet_nodes(self):
+        return self._nodes
+
 
 class FakeSsh:
     def __init__(self, upload_ok=True, run_ok=True):

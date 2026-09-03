@@ -180,6 +180,20 @@ class Database(TelegramMixin):
             func="get_online_nodes",
         )
 
+    async def get_fleet_nodes(self) -> list[asyncpg.Record]:
+        """ВЕСЬ реестр узлов из vocabulary.nodes, БЕЗ фильтра по is_online.
+
+        Для генерации реестра (_nodes.sh) и раздачи whitelist: временно
+        недоступный узел не должен выпадать из списка, иначе остальные узлы
+        перестанут его пускать и сетевой сбой превратится в потерю доступа.
+        Для деплоя/операций на узлах используйте get_online_nodes()."""
+        return await self._query(
+            "SELECT id, hostname, server_name, ip_address, description, is_online, claster "
+            "FROM vocabulary.nodes "
+            "ORDER BY server_name",
+            func="get_fleet_nodes",
+        )
+
     async def find_node_by_ip(self, ip_address: str) -> asyncpg.Record | None:
         """Узел по IP (гард дублей при регистрации новой ноды). None — если нет."""
         return await self._query(

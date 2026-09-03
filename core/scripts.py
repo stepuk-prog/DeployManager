@@ -192,9 +192,9 @@ async def _run_local_script(spec: dict, script: str, argv: list[str], db: Databa
     if dry_run:
         print(f"[DRY] bash {spec['file']} {' '.join(shlex.quote(c) for c in argv)}".rstrip())
         return
-    nodes = [dict(r) for r in await db.get_online_nodes()]
+    nodes = [dict(r) for r in await db.get_fleet_nodes()]
     if not nodes:
-        print("🛑 Нет online-узлов в vocabulary.nodes — некуда идти.")
+        print("🛑 vocabulary.nodes пуста — некуда идти.")
         return
     workdir = tempfile.mkdtemp(prefix="dm-fleet-")
     try:
