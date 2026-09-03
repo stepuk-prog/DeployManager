@@ -28,6 +28,24 @@
 - **Новый оператор / ротация**: добавить строку в `operator_keys.pub`, прогнать
   `operator_access` по флоту, обновить этот реестр.
 
+## Грабли: имя ключа больше не дефолтное (03-09-2026)
+
+`id_vlad_2026` — **не** из списка имён, которые ssh пробует сам (`id_rsa`, `id_ecdsa`,
+`id_ed25519`, …). До ротации ключ звался `id_rsa`, и всё, что ходит **по IP**, работало
+без единой строчки конфига. После переименования такие обращения молча остались без
+идентичности: `IdentityFile` в `~/.ssh/config` привязан к Host-**алиасам** (`node-1`,
+`cluster3`), а по IP ни один блок не матчится → `Permission denied (publickey)`.
+
+Накрыло всё, что обходит флот по IP намеренно: `Clusters/scripts/_nodes.sh` и все
+`scope: local` кнопки DeployManager (аудит, whitelist, смена IP). Закрыто тремя местами:
+- `~/.ssh/config` — блок `Host * !github.com !github.com-stepuk` с `IdentityFile`
+  (вне маркеров `MANJARO-SERVERS`, иначе генератор затрёт);
+- `core/scripts.py::_gen_nodes_sh` — ключ из `.env` DM (`PRIV_KEY`, иначе `SSH_KEY`);
+- `Clusters/scripts/_nodes.sh` — `FLEET_SSH_KEY` с дефолтом и проверкой на читаемость.
+
+**При следующей ротации** проверять не только «пускает ли», но и «пускает ли ПО IP,
+без `-i`»: `ssh -o BatchMode=yes root@<ip> hostname`.
+
 ## Что было до 28-08-2026 (и почему меняли)
 
 | Имя | Тип | Fingerprint | Чем плох |

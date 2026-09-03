@@ -132,16 +132,22 @@ def _gen_nodes_sh(nodes: list) -> str:
     cli = " ".join(shlex.quote(n["ip_address"]) for n in clients)
     ip_name = "\n".join(f"  [{shlex.quote(n['ip_address'])}]={shlex.quote(name(n))}"
                         for n in nodes)
+    # Ключ — из собственного .env DM (PRIV_KEY, иначе общий SSH_KEY). Без него ssh по IP
+    # не матчит Host-алиасы ~/.ssh/config и падает в Permission denied (publickey):
+    # имя ключа флота (id_vlad_2026) не входит в дефолтные, что ssh пробует сам.
+    key = config.PRIV_KEY or config.SSH_KEY
+    ident = f" -o IdentitiesOnly=yes -i {shlex.quote(key)}" if key else ""
     return (
         "#!/usr/bin/env bash\n"
-        "# СГЕНЕРИРОВАНО DeployManager из vocabulary.nodes (online) — НЕ редактировать.\n"
+        "# СГЕНЕРИРОВАНО DeployManager из vocabulary.nodes (весь реестр) — НЕ редактировать.\n"
         "# DM самодостаточен: топология берётся из БД, не из внешнего репозитория.\n"
         f"CLUSTER_IPS=({cl})\n"
         f"CLIENT_IPS=({cli})\n"
         'ALL_IPS=("${CLUSTER_IPS[@]}" "${CLIENT_IPS[@]}")\n'
         f"declare -A IP_NAME=(\n{ip_name}\n)\n"
-        "SSH_USER=root\n"
-        "SSH_OPTS=(-o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=accept-new)\n"
+        f"SSH_USER={shlex.quote(_PRIV)}\n"
+        f"SSH_OPTS=(-o ConnectTimeout={config.SSH_CONNECT_TIMEOUT} -o BatchMode=yes"
+        f" -o StrictHostKeyChecking=accept-new{ident})\n"
         'ssh_node() { local ip="$1"; shift; ssh "${SSH_OPTS[@]}" "${SSH_USER}@${ip}" "$@"; }\n'
     )
 
