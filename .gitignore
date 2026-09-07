@@ -6,5 +6,6 @@ __pycache__/
 .idea/
 .directory
 *.log
-logs/deploy_audit.log
+# resume-журналы мастера setup-node: локальное состояние прогона, не артефакт репозитория
+logs/setup_node/
 

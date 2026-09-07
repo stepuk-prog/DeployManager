@@ -59,6 +59,12 @@ global
     group haproxy
     daemon
     maxconn 5000
+    # Состояние серверов между reload'ами. Без него новый процесс после kill -USR2 стартует,
+    # считая ВСЕ три узла кластера живыми, и balance leastconn способен отдать подключение
+    # PgBouncer'у РЕПЛИКИ — запись упадёт read-only. Окно замерено на node-1 03-09-2026:
+    # 0.4–0.8 с, реплика уходит по ПЕРВОЙ проверке, а не по fall 2. Файл пишет ExecReload
+    # юнита (ниже) перед сигналом мастеру.
+    server-state-file /var/lib/haproxy/server-state
 
 defaults
     log global
@@ -71,6 +77,7 @@ defaults
     timeout server  15m
     retries 2
     option redispatch
+    load-server-state-from-file global
 
 frontend postgres_frontend
     bind 127.0.0.1:6442
@@ -104,7 +111,14 @@ Description=HAProxy Client Load Balancer
 After=network.target
 
 [Service]
-ExecStart=/usr/local/sbin/haproxy -W -db -f /etc/haproxy/haproxy.cfg
+# /usr/sbin/haproxy, а не /usr/local/sbin: путь есть в ОБОИХ вариантах установки — при сборке
+# из исходников provision-base делает туда симлинк, а пакет из ppa:vbernat кладёт бинарь прямо
+# сюда. На флоте с 26-08-2026 стоит именно пакет, и /usr/local/sbin/haproxy там не существует.
+ExecStart=/usr/sbin/haproxy -W -db -f /etc/haproxy/haproxy.cfg
+# Порядок важен: сперва снимаем состояние серверов в файл, потом сигналим мастеру —
+# иначе новый процесс поднимется со «всё живо» (см. server-state-file в haproxy.cfg).
+ExecReload=/bin/sh -c 'echo "show servers state" | /usr/bin/socat stdio /var/run/haproxy.sock > /var/lib/haproxy/server-state.new && mv /var/lib/haproxy/server-state.new /var/lib/haproxy/server-state || true'
+ExecReload=/bin/kill -USR2 $MAINPID
 Restart=always
 RestartSec=5
 
