@@ -39,7 +39,11 @@ _ACQUIRE_TIMEOUT = 30
 
 
 class Database(TelegramMixin):
-    def __init__(self, min_size: int = 1, max_size: int = 5):
+    def __init__(self, min_size: int = 1, max_size: int = 5, database: str | None = None):
+        # database — имя БД; по умолчанию Program. Параметр нужен наследникам, которые
+        # ходят в другую базу того же кластера (person-юзерботы живут в БД forum),
+        # чтобы не копировать сюда машинерию пула и ретраев.
+        self.database = database or config.PG_DATABASE
         self.min_size = min_size
         self.max_size = max_size
         self._pool: asyncpg.Pool | None = None
@@ -50,13 +54,13 @@ class Database(TelegramMixin):
             try:
                 self._pool = await cast(Awaitable[asyncpg.Pool], asyncpg.create_pool(
                     user=config.PG_USER, password=config.PG_PASSWORD,
-                    host=config.PG_HOST, port=config.PG_PORT, database=config.PG_DATABASE,
+                    host=config.PG_HOST, port=config.PG_PORT, database=self.database,
                     min_size=self.min_size, max_size=self.max_size,
                     statement_cache_size=0,   # обязательно для PgBouncer transaction mode
                     timeout=config.PG_CONNECT_TIMEOUT, command_timeout=15,
                 ))
                 logger.info("БД %s подключена (PgBouncer %s:%s, пул min=%s max=%s)",
-                            config.PG_DATABASE, config.PG_HOST, config.PG_PORT,
+                            self.database, config.PG_HOST, config.PG_PORT,
                             self.min_size, self.max_size)
                 return
             except (CannotConnectNowError, ConnectionRefusedError, OSError,

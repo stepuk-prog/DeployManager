@@ -29,6 +29,15 @@ _tg_apps = [p.strip() for p in os.getenv("TELEGRAM_APPS", "my_gram,telegram_apps
 TG_APP_FIELD = _tg_apps[0] if _tg_apps and _tg_apps[0] else "my_gram"
 TG_APPS_TABLE = _tg_apps[1] if len(_tg_apps) > 1 and _tg_apps[1] else "telegram_apps"
 
+# ----- Юзерботы ИИ-персонажей (ForumPersonas) -----
+# Вторая группа юзерботов живёт в ДРУГОЙ базе (forum, схема person) и в своём наборе
+# Telegram Desktop: одна программа на всех, у каждого слота свой -workdir. В справочник
+# telegram.telegram_apps они намеренно не заводятся — там клиенты флота, и мешать
+# два набора в одном справочнике значит однажды залогинить персонажа в рабочий клиент.
+PG_DB_FORUM = os.getenv("PG_DB_FORUM", "forum")
+PERSON_TG_EXEC = os.getenv("PERSON_TG_EXEC", "/home/vlad/telegram_person/Telegram/Telegram")
+PERSON_TG_WORKDIR = os.getenv("PERSON_TG_WORKDIR", "/home/vlad/TelegramsPerson")
+
 # ----- SSH (vova + passwordless sudo) -----
 SSH_USER = os.getenv("SSH_USER", "vova")
 SSH_KEY = str(Path(os.getenv("SSH_KEY", "~/.ssh/id_nodes")).expanduser())
@@ -63,7 +72,13 @@ RSYNC_EXCLUDES = [
     "__pycache__", "*.pyc", "*.egg-info", ".idea", "pictures/new",
     "*.md", ".env.example",
     ".claude", ".directory", ".vscode",     # dev-артефакты редакторов/инструментов — не деплоим
+    "scrips",   # площадка локальных разведок и одноразовых стендов (см. NB ниже)
 ]
+# NB про `scrips` (именно с опечаткой): так называется папка разведок у семи программ семьи
+# binodex, она у них под .gitignore и в поставке не нужна — на ноде это мёртвый код, который
+# при разборе инцидента путают с рабочим. Парного `scripts` тут НЕТ и быть не должно: у
+# Dispatcher2.0, Clusters и квизов каталог с таким именем — РАБОЧИЙ, а паттерн без слэша
+# матчит любой компонент пути в любом проекте, то есть срезал бы и их.
 # NB: rsync-паттерн без слэша/wildcard матчит ТОЧНОЕ имя компонента — ".git" НЕ ловит ".git.backup"
 # (и любые .git-* ). Бэкап git-папки приходится исключать отдельной записью, иначе он уезжает на ноду.
 # Что вернуть обратно, даже если попало под exclude (структурный маркер рантайм-папки files/).

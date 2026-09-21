@@ -1,56 +1,52 @@
 """Суб-инструмент «Юзерботы (сессии)»: логин юзерботов (pyrofork/Telethon) → session_string.
 
-Точка входа `run(db)` — под-меню: 📋 Список / ♻️ Обновить сессию / ➕ Создать сессию.
-Зовётся из cli.run (CLI-меню/`--action sessions`) и из GUI (кнопка из реестра tools).
-Пул БД Program поднимает caller (cli.run) — здесь только ветки поверх готового `db`.
-Портировано из SessionManager (cli._list + меню-роутер).
+ДВЕ ГРУППЫ юзерботов, и это разделение по базам, а не по вкусу:
+
+  🛠 Флот      — `Program.telegram.telegram`: аккаунты, которыми работают программы флота.
+                 Привязка к программе (`programdata.user_bot`), Desktop — из справочника
+                 `telegram.telegram_apps`. Ветки в `fleet.py`.
+  🎭 Персонажи — `forum.person.account`: аккаунты ИИ-персонажей форума (ForumPersonas).
+                 Привязка к персонажу (`person.persona`), Desktop — одна программа с
+                 `-workdir` слота, две колонки сессий (pyrofork + Telethon), свой набор
+                 проверок (живость, приватность). Ветки в `personas.py`.
+
+Мешать их в одном списке нельзя: базы разные, сджойнить нечем, а запись сессии не в ту
+таблицу молча ломает и аккаунт, и программу, которая им работает.
+
+Точка входа `run(db)` — выбор группы, дальше под-меню группы. Пул БД Program поднимает
+caller (cli.run); пул БД forum поднимает и закрывает сама группа персонажей.
 """
 from core import ui
 from database import Database
-from tools.sessions import recover
+from tools.sessions import fleet, personas
 
-_ACTIONS = [
-    ("list", "📋 Список юзерботов"),
-    ("recover", "♻️ Обновить сессию (есть session_string)"),
-    ("create", "➕ Создать сессию (без session_string)"),
+_GROUPS = [
+    ("fleet", "🛠 Юзерботы флота (БД Program)"),
+    ("person", "🎭 Персонажи форума (БД forum)"),
 ]
 
-
-async def _list(db: Database) -> None:
-    """Read-only таблица юзерботов со статусами (без секретов)."""
-    rows = await db.list_userbots()
-    if not rows:
-        print("В telegram.telegram нет юзерботов.")
-        return
-    print(f"\nЮзерботов: {len(rows)}\n")
-    print(f"{'id_telegram':>12}  {'имя':<24} {'телефон':<16} "
-          f"{'api':<4} {'sess':<5} {'mail':<5} {'почта'}")
-    print("-" * 100)
-    for r in rows:
-        api = "✅" if r["api_id"] and r["has_hash"] else "—"
-        sess = "✅" if r["has_session"] else "—"
-        mailp = "✅" if r["has_mailpass"] else "—"
-        print(f"{r['id_telegram']:>12}  {(r['name'] or '')[:24]:<24} "
-              f"{(r['phone'] or '—'):<16} {api:<4} {sess:<5} {mailp:<5} {r['mail'] or '—'}")
-    have = sum(1 for r in rows if r["has_session"])
-    print(f"\nС сессией: {have} / {len(rows)}; без сессии: {len(rows) - have}.")
+# Действия старого, «одногруппного» меню — чтобы `--action sessions --command list`
+# и вызовы из GUI, написанные до разделения, продолжали попадать во флот.
+_FLEET_ACTIONS = {"list", "recover", "create"}
 
 
 async def run(db: Database, action: str | None = None) -> None:
-    """Под-меню суб-инструмента. action ∈ {list, recover, create} или None (спросить).
-    БД-пул уже поднят caller'ом (cli.run)."""
-    if not action:
-        idx = await ui.select("Юзерботы — что делаем?", [label for _, label in _ACTIONS])
-        if idx is None:
-            print("✖️ Отменено.")
-            return
-        action = _ACTIONS[idx][0]
+    """Выбор группы юзерботов, затем её под-меню.
 
-    if action == "list":
-        await _list(db)
-    elif action == "recover":
-        await recover.recover_session(db)
-    elif action == "create":
-        await recover.recover_session(db, only_without_session=True)
+    action задан и это старое флотовое действие → идём во флот без вопроса (обратная
+    совместимость). action вида `person:<ветка>` → сразу в нужную ветку персонажей."""
+    if action in _FLEET_ACTIONS:
+        await fleet.run(db, action)
+        return
+    if action and action.startswith("person"):
+        await personas.run(action.split(":", 1)[1] if ":" in action else None)
+        return
+
+    idx = await ui.select("С какой группой юзерботов работаем?", [label for _, label in _GROUPS])
+    if idx is None:
+        print("✖️ Отменено.")
+        return
+    if _GROUPS[idx][0] == "fleet":
+        await fleet.run(db)
     else:
-        print(f"Неизвестное действие суб-инструмента: {action}")
+        await personas.run()

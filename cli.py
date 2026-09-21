@@ -555,7 +555,7 @@ async def run(args=None):
             "  [3] проверить версии на серверах (vs локальной)\n"
             "  [4] обновить .env / service-файлы на серверах (без передеплоя)\n"
             "  [5] деплой инфра-компонента диспетчера (GD / WD / CD / DispatcherCtl)\n"
-            "  [6] юзерботы (сессии): логин → session_string в telegram.telegram\n"
+            "  [6] юзерботы (сессии): флот (БД Program) и персонажи форума (БД forum)\n"
             "  [7] cookies (OTC/Screen/TV/Binodex) — GUI-only, видимый браузер\n"
             "  [8] настроить новую ноду (bootstrap → тип → регистрация → Watchdog)\n"
             "  [q] выход\nВыбор", "1")

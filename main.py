@@ -16,7 +16,7 @@ def _parse_args():
                    help="ветка без меню: new (с нуля) / add (добавить сервер) / "
                         "check (версии) / create / state / manage / uninstall / sync (.env+юниты) / "
                         "infra (деплой control-plane компонента: --component) / "
-                        "sessions (юзерботы: логин → session_string) / cookies (GUI-only)")
+                        "sessions (юзерботы: флот + персонажи форума) / cookies (GUI-only)")
     p.add_argument("--command", choices=["start", "stop", "restart"],
                    help="для --action manage: команда сервису через watchdog")
     p.add_argument("--component", choices=["GD", "WD", "CD", "DispatcherCtl"],
