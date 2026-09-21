@@ -292,7 +292,7 @@ def code_uids(imap, froms: tuple[str, ...] = MAIL_FROM, deadline: float | None =
 
     `deadline` (monotonic) — не начинать ОЧЕРЕДНОЙ поиск, если окно ожидания кода уже вышло:
     каждый поиск на молчащем сокете стоит свой таймаут, и на двух отправителях это удваивало
-    хвост потока (см. про контракт у IMAP_OP_TIMEOUT). Отданное частично — не потеря: за
+    хвост потока (см. КОНТРАКТ у CODE_STEP_SLACK). Отданное частично — не потеря: за
     дедлайном вызывающий всё равно уходит с ошибкой."""
     uids: set[int] = set()
     for sender in froms:
@@ -360,8 +360,9 @@ def wait_for_code(imap, baseline: set[int], froms: tuple[str, ...] = MAIL_FROM,
     начинается: он всё равно не успел бы дождаться кода, а поток вылез бы за внешний потолок.
 
     Дедлайн сверяется не только между опросами, но и ВНУТРИ опроса (перед каждым поиском и
-    после чтения письма) — чтобы за окно выходила максимум одна операция, как обещает контракт
-    у IMAP_OP_TIMEOUT."""
+    после чтения письма) — чтобы за окно выходили максимум ДВЕ операции подряд, как и обещает
+    КОНТРАКТ у CODE_STEP_SLACK: поиск, успевший стартовать до дедлайна, и чтение письма, чей uid
+    он нашёл."""
     pause = stop_wait or (lambda seconds: bool(time.sleep(seconds)))
     log = logger or _log
     deadline = time.monotonic() + CODE_WAIT_SECONDS
@@ -377,7 +378,7 @@ def wait_for_code(imap, baseline: set[int], froms: tuple[str, ...] = MAIL_FROM,
                 imap.noop()
                 # Дедлайн сверяем и МЕЖДУ операциями опроса, не только между опросами: иначе
                 # опрос, начатый в последнюю секунду окна, тянет четыре сокет-таймаута подряд
-                # и выводит поток за внешний потолок (см. про контракт у IMAP_OP_TIMEOUT).
+                # и выводит поток за внешний потолок (см. КОНТРАКТ у CODE_STEP_SLACK).
                 for uid in sorted(set(code_uids(imap, froms, deadline)) - baseline, reverse=True):
                     # Чтение письма НЕ пропускаем по дедлайну: это операция-развязка, ради
                     # которой всё и затевалось, а свежий uid уже найден. Ограничиваем число
@@ -437,7 +438,7 @@ def safe_logout(imap) -> None:
         pass
 
 
-async def imap_thread(fn, *args, timeout: int = IMAP_OP_TIMEOUT):
+async def imap_thread(fn, *args, timeout: float = IMAP_OP_TIMEOUT):
     """IMAP-операция в потоке под жёстким потолком: зависший сервер в середине сессии не вешает
     async-флоу навсегда (поток-сирота добьётся сокет-таймаутом). asyncio.to_thread сам не
     отменяем, но await вернётся по таймауту → флоу не залипает."""
