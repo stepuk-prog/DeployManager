@@ -96,6 +96,6 @@ def test_wait_for_code_takes_fresh_letter_only():
     imap = _FakeImap({1: ("no-reply@mail.privy.io", _privy_letter("111111")),
                       2: ("account@mail.binodex.io", _own_auth_letter("222222"))})
     imap.noop = lambda: None
-    code = core.wait_for_code(imap, baseline={1}, froms=core.mail_froms(DB_SEL),
-                              hint=core.subject_hint(DB_SEL))
-    assert code == "222222"
+    code, conn = core.wait_for_code(imap, baseline={1}, froms=core.mail_froms(DB_SEL),
+                                    hint=core.subject_hint(DB_SEL))
+    assert (code, conn) == ("222222", imap)   # соединение возвращается: им чистятся письма

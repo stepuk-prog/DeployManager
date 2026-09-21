@@ -34,6 +34,7 @@ import re
 import time
 from collections.abc import Mapping
 from email.header import decode_header, make_header
+from functools import partial
 
 # Отправители письма с кодом: Privy (no-reply@privy.io, no-reply@mail.privy.io) и сам binodex
 # (account@mail.binodex.io). Фильтр по домену, потому что адрес внутри домена они уже меняли.
@@ -50,6 +51,14 @@ SESSION_PROBE_JS = 'keys => keys.some(k => !!localStorage.getItem(k))'
 CODE_WAIT_SECONDS = 120
 CODE_POLL_EVERY = 3
 IMAP_OP_TIMEOUT = 30   # сек на одну IMAP-операцию в потоке (connect-таймаут покрывает лишь connect)
+
+# Сколько раз переподключаемся к Gmail ВНУТРИ одного ожидания кода. Gmail роняет IMAP-сессию
+# транзиентно — imaplib отдаёт это как `abort: command: NOOP => System Error`, и объект
+# соединения после такого мёртв. Без переподключения обрыв рвёт ВЕСЬ вход: письмо с кодом в
+# ящик приходит штатно, а мы уже ушли в «релогин не удался» и жжём следующую попытку (а с ней
+# и новый одноразовый код — то есть лимит запросов). Число небольшое: дольше держит общий
+# дедлайн CODE_WAIT_SECONDS, а не счётчик.
+IMAP_RECONNECT_MAX = 3
 
 REQUIRED_SELECTORS = ('login_open', 'login_email', 'login_submit', 'login_code_inputs')
 
@@ -264,24 +273,51 @@ def extract_code(imap, uid: int, hint: str = MAIL_SUBJECT_HINT) -> str | None:
 
 
 def wait_for_code(imap, baseline: set[int], froms: tuple[str, ...] = MAIL_FROM,
-                  hint: str = MAIL_SUBJECT_HINT, stop_wait=None) -> str:
+                  hint: str = MAIL_SUBJECT_HINT, stop_wait=None,
+                  reconnect=None, logger=None) -> tuple[str, object]:
     """Первое письмо с кодом ПОСЛЕ запроса (uid не из baseline) — старые коды игнорируем.
     Блокирующий поллинг IMAP до CODE_WAIT_SECONDS — звать через imap_thread.
+
+    Возвращает (код, СОЕДИНЕНИЕ): внутри ожидания соединение может быть ПЕРЕСОЗДАНО, поэтому
+    вызывающий обязан работать дальше с возвращённым объектом — им же чистятся письма и
+    делается logout. Старый после обрыва непригоден, и purge по нему тихо не сделал бы ничего.
 
     `stop_wait(seconds) -> bool` — пауза между опросами, которая умеет прерваться по остановке
     процесса (True = пора уходить). Программе это не роскошь: отмена таска по SIGTERM
     освобождает async-сторону мгновенно, а ЭТОТ поток живёт дальше, и asyncio.run на выходе
     ждёт потоки пула без таймаута (3.11) — сигнал, пришедший в окно ожидания кода, держал
     процесс до двух минут уже после teardown, что при TimeoutStopSec=120 означало SIGKILL.
-    Без параметра поведение прежнее: обычный time.sleep."""
+    Без параметра поведение прежнее: обычный time.sleep.
+
+    `reconnect() -> imap` — как поднять ЗАНОВО соединение с ящиком (обычно
+    `partial(imap_connect, mail, app_pass)`). Без него первый же транзиентный обрыв Gmail
+    уходит наверх и рвёт вход, хотя письмо с кодом в ящике штатное. UID после переподключения
+    остаются теми же (UIDVALIDITY ящика не меняется), поэтому baseline продолжает работать."""
     pause = stop_wait or (lambda seconds: bool(time.sleep(seconds)))
+    log = logger or _log
     deadline = time.monotonic() + CODE_WAIT_SECONDS
+    reconnects = 0
     while time.monotonic() < deadline:
-        imap.noop()
-        for uid in sorted(set(code_uids(imap, froms)) - baseline, reverse=True):
-            code = extract_code(imap, uid, hint)
-            if code:
-                return code
+        try:
+            imap.noop()
+            for uid in sorted(set(code_uids(imap, froms)) - baseline, reverse=True):
+                code = extract_code(imap, uid, hint)
+                if code:
+                    return code, imap
+        except (imaplib.IMAP4.abort, imaplib.IMAP4.error, OSError) as err:
+            # Транзиент Gmail: соединение мертво, но код в ящик придёт (или уже пришёл).
+            # Пересоздаём сессию и ждём дальше в пределах ТОГО ЖЕ дедлайна — счётчик попыток
+            # нужен лишь против бесконечного цикла на ящике, который не поднимается вовсе.
+            if reconnect is None or reconnects >= IMAP_RECONNECT_MAX:
+                raise
+            reconnects += 1
+            log.warning(f'binodex: IMAP оборвался ({err}) — переподключаюсь '
+                        f'({reconnects}/{IMAP_RECONNECT_MAX})')
+            safe_logout(imap)          # мёртвое соединение закрываем тихо
+            if pause(CODE_POLL_EVERY):
+                raise LoginInterrupted('остановка процесса — ожидание кода прервано')
+            imap = reconnect()
+            continue
         if pause(CODE_POLL_EVERY):
             raise LoginInterrupted('остановка процесса — ожидание кода прервано')
     raise RuntimeError(f'код входа не пришёл за {CODE_WAIT_SECONDS}с '
@@ -714,8 +750,12 @@ async def inline_login(page, context, *, mail: str, app_pass: str, sel: dict,
                         raise LoginRateLimited(alert)
                     return False
                 raise
-        code = await imap_thread(wait_for_code, imap, baseline, froms, hint, stop_wait,
-                                 timeout=CODE_WAIT_SECONDS + IMAP_OP_TIMEOUT)
+        # Соединение забираем обратно: внутри ожидания его могли пересоздать после обрыва
+        # Gmail, и уборка писем с logout ниже обязаны идти по ЖИВОМУ объекту.
+        code, imap = await imap_thread(
+            partial(wait_for_code, imap, baseline, froms, hint, stop_wait,
+                    partial(imap_connect, mail, app_pass), logger),
+            timeout=CODE_WAIT_SECONDS + IMAP_OP_TIMEOUT)
         await _enter_code(page, sel['login_code_inputs'], code)
         # Ключ сессии зависит от механизма входа, который binodex выбирает сам — ждём ЛЮБОЙ из
         # списка. Пока ждали именно privy:token, вход по новой модалке проходил, а мы считали
