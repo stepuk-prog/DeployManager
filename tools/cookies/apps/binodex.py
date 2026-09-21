@@ -1,65 +1,76 @@
-"""Async-автоматизация логина binodex.app (Privy email-OTP) + настройка сайта. Порт
-BinoOptions apps/binodex_session.py на async (тут — в Flet-цикле, без подпроцесса:
-браузер видимый, при сбое окно не закрываем → ручное вмешательство).
+"""Вход на binodex.app (email-OTP) и настройка сайта для вкладки «Cookies».
 
-Шаги разнесены, потому что между отправкой e-mail и вводом кода флоу ждёт письмо через
-IMAP (apps/imap_code.py, в asyncio.to_thread). Селекторы (sel) — из БД (db.binodex_selectors).
+Сам вход — в ЯДРЕ (`binocore.binodex`), тут только обёртка. До 21-09-2026 здесь лежала
+тринадцатая копия логина, причём доядерная: письмо искалось только от `privy.io`, код читался
+только из ТЕЛА письма, а признаком входа считался единственный ключ `privy:token`. binodex с
+18-09-2026 раскатывает СВОЮ авторизацию (флаг `my.ownAuth`, A/B по нодам): письмо приходит с
+`account@mail.binodex.io`, код стоит в ТЕМЕ, в localStorage ложится `ownAuthSession`. На таком
+аккаунте инструмент «не видел почту» — досиживал 120с и падал по таймауту, хотя письмо лежало
+в ящике. Ядро держит оба механизма сразу и читает отправителей/тему/ключи сессии из
+`binodex_settings`, поэтому следующий ход binodex правится один раз на всю семью.
+
+Настройка сайта (масштабы, окно Welcome) осталась здесь: она нужна только этому инструменту —
+боевые программы правят график своим `ensure_chart_setup` перед каждым опционом.
 """
-from playwright.async_api import Page, TimeoutError as PWTimeout
+from playwright.async_api import Page
 
+from binocore import binodex as core
 from tools.cookies.logs import init_logger
-from tools.cookies.settings import config
-from tools.cookies.settings.constant import REQUIRED_LOGIN_SELECTORS, SETUP_STEPS
+from tools.cookies.settings.constant import SETUP_STEPS
 
 logger = init_logger(__name__)
 
 
 def missing_login_selectors(sel: dict) -> list[str]:
-    """Каких обязательных селекторов логина не хватает (пусто = всё ок)."""
-    return [k for k in REQUIRED_LOGIN_SELECTORS if not sel.get(k)]
+    """Каких обязательных селекторов логина не хватает (пусто = всё ок).
+
+    Список ЯДРОВЫЙ — инструмент и программы обязаны требовать одно и то же. Проверяем до
+    запуска браузера: ядро откажется и само, но оператору дырку в `binodex_settings` полезнее
+    увидеть раньше, чем откроется окно."""
+    return [k for k in core.REQUIRED_SELECTORS if not sel.get(k)]
 
 
-async def _wait_code_step(page: Page, sel: dict, timeout: int) -> None:
-    """Шаг ввода кода: в DOM стало ≥6 input'ов (на шаге e-mail — один)."""
-    await page.wait_for_function(
-        "s => document.querySelectorAll(s).length >= 6",
-        arg=sel["login_code_inputs"], timeout=timeout)
+class _StatusLog:
+    """Логгер для ядра, который пишет И в файл инструмента, И строкой в окно визарда.
+
+    Ядро логирует ход входа (отказ модалки с её же текстом, «binodex сам увёл на /trade»,
+    успех) — оператору у видимого браузера это ровно то, что нужно видеть. Уровень `report`
+    ядро зовёт через getattr, так что его отсутствие безопасно: успех уйдёт в info."""
+
+    def __init__(self, status) -> None:
+        self._status = status
+
+    def _emit(self, prefix: str, message, args) -> None:
+        text = str(message) % args if args else str(message)
+        logger.info("binodex-логин: %s", text)
+        try:
+            self._status(f"{prefix}{text}")
+        except (Exception,):
+            pass          # визард могли закрыть — вход из-за этого прерывать незачем
+
+    def debug(self, message, *args) -> None:
+        logger.debug("binodex-логин: %s", str(message) % args if args else message)
+
+    def info(self, message, *args) -> None:
+        self._emit("", message, args)
+
+    def warning(self, message, *args) -> None:
+        self._emit("⚠️ ", message, args)
+
+    def error(self, message, *args) -> None:
+        self._emit("❌ ", message, args)
 
 
-async def open_and_send_email(page: Page, sel: dict, mail: str) -> None:
-    """Открыть binodex → ввести e-mail → отправить (Enter, фолбэк — клик login_submit).
-    Возвращается, когда появились ячейки кода."""
-    await page.goto(config.BINODEX_LANDING, wait_until="domcontentloaded", timeout=30_000)
-    await page.click(sel["login_open"], timeout=15_000)
-    await page.fill(sel["login_email"], mail, timeout=15_000)
-    await page.locator(sel["login_email"]).press("Enter")   # отправка надёжнее через Enter
-    try:
-        await _wait_code_step(page, sel, timeout=8_000)
-    except PWTimeout:
-        await page.locator(sel["login_submit"]).first.click(timeout=8_000)
-        await _wait_code_step(page, sel, timeout=15_000)
+async def inline_login(page: Page, sel: dict, mail: str, app_pass: str, status=None) -> bool:
+    """Войти по одноразовому коду с почты в ТЕКУЩЕМ (видимом) окне. True — вошли.
 
-
-async def enter_code(page: Page, sel: dict, code: str) -> None:
-    """Ввести 6-значный код (keyboard.type — OTP-виджет раскидает; фолбэк — по цифре)."""
-    cells = page.locator(sel["login_code_inputs"])
-    if await cells.count() < 6:
-        raise RuntimeError(f"ожидал 6 ячеек кода, нашёл {await cells.count()}")
-    await cells.first.click()
-    await page.keyboard.type(code, delay=60)
-    if await cells.first.input_value() != code[0]:
-        for i, ch in enumerate(code):
-            await cells.nth(i).fill(ch)
-
-
-async def finish_login(page: Page) -> None:
-    """Privy больше НЕ редиректит на /trade. Признак входа = localStorage['privy:token'];
-    дождавшись, сами идём на /trade и проверяем, что не выбросило обратно."""
-    await page.wait_for_function(
-        "() => !!window.localStorage.getItem('privy:token')", timeout=30_000)
-    await page.goto(config.BINODEX_TRADE, wait_until="domcontentloaded", timeout=30_000)
-    if not page.url.rstrip("/").endswith("/trade"):
-        raise RuntimeError(f"после логина редирект с /trade на {page.url}")
+    Обычный сбой ядро не бросает, а возвращает False (исключение одно — отказ по лимиту
+    запросов кода, `core.LoginRateLimited`): вызывающий тогда оставляет окно открытым, чтобы
+    оператор доделал вход руками. Письма с одноразовыми кодами ядро убирает само — но только
+    после доказанного входа."""
+    log = _StatusLog(status) if status is not None else logger
+    return await core.inline_login(page, page.context, mail=mail, app_pass=app_pass,
+                                   sel=sel, logger=log)
 
 
 async def dismiss_welcome(page: Page) -> None:

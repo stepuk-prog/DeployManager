@@ -12,8 +12,9 @@ from typing import Callable
 
 import flet as ft
 
+from binocore import binodex as core_binodex
 from tools.cookies.apps import binodex as bnd
-from tools.cookies.apps import imap_code, otc
+from tools.cookies.apps import otc
 from tools.cookies.apps.cookies import normalize_cookies
 from tools.cookies.apps.notify import notify
 from tools.cookies.classes import BrowserManager
@@ -304,16 +305,16 @@ async def binodex_flow(ctx: FlowContext, account: dict, mode: str, on_saved=None
         return
 
     session = None
-    conn = None
-    auto_ok = False
 
-    # 1. IMAP-логин ОТДЕЛЬНО: если почта не пускает (неверный/протухший app-пароль) — браузер НЕ
+    # 1. ПРОБА ПОЧТЫ ОТДЕЛЬНО: если ящик не пускает (неверный/протухший app-пароль) — браузер НЕ
     #    открываем (в браузере это не чинится), правится mail/mail_app_pass в telegram.telegram.
+    #    Сам вход потом поднимет своё соединение: ядро ведёт IMAP от начала до logout, и отдавать
+    #    ему наполовину использованный объект — лишняя связь ради одного сэкономленного коннекта.
     try:
         wiz.busy(True)
         wiz.status("Подключаюсь к почте (IMAP)…")
-        conn = await asyncio.to_thread(imap_code.imap_connect, mail, app_pass)
-        baseline = set(await asyncio.to_thread(imap_code.privy_uids, conn))
+        probe = await core_binodex.imap_thread(core_binodex.imap_connect, mail, app_pass)
+        await core_binodex.imap_thread(core_binodex.safe_logout, probe)
     except (Exception,) as error:
         logger.warning("binodex_flow IMAP-логин (%s): %s", mail, error)
         wiz.status(f"❌ Почта отвергла вход: {_fmt_err(error)}")
@@ -323,44 +324,36 @@ async def binodex_flow(ctx: FlowContext, account: dict, mode: str, on_saved=None
         wiz.close()
         return
 
-    # 2. Браузер + Privy: тут при сбое окно ОСТАВЛЯЕМ открытым (оператор доделывает вручную).
+    # 2. Браузер + вход ядром: при сбое окно ОСТАВЛЯЕМ открытым (оператор доделывает вручную).
+    #    Шаги (e-mail → код из письма → ввод → признак сессии → /trade) и уборку писем ведёт
+    #    `binocore.binodex`; сюда они приходят строками статуса через логгер-адаптер.
+    auto_ok = False
     try:
         wiz.status("Запуск браузера…")
         launch_opts = await _binodex_launch_options(ctx.db, use_proxy, wiz.status)
         session = await ctx.browser.launch(launch_opts, config.BINODEX_CONTEXT_OPTIONS)
         await _bust_stale_assets(session.page)   # обойти протухший CDN-кэш app.js (иначе пустая страница)
-        wiz.status("Отправляю e-mail на binodex…")
-        await bnd.open_and_send_email(session.page, sel, mail)
-
-        wiz.status("Жду код Privy на почте…")
-        # Соединение может быть пересоздано внутри ожидания (Gmail роняет сессию транзиентно) —
-        # забираем актуальное, иначе чистка писем и logout ниже пошли бы по мёртвому объекту.
-        code, conn = await asyncio.to_thread(imap_code.wait_for_code, conn, baseline, mail, app_pass)
-        wiz.status(f"Код получен: {code}")
-        await bnd.enter_code(session.page, sel, code)
-
-        wiz.status("Завершаю вход…")
-        await bnd.finish_login(session.page)
-        if do_setup:
-            wiz.status("Прокликиваю настройку сайта…")
-            await bnd.setup_site(session.page, sel)
-        auto_ok = True
-        wiz.status("✅ Вход выполнен автоматически")
+        wiz.status("Вхожу на binodex: e-mail → код с почты…")
+        auto_ok = await bnd.inline_login(session.page, sel, mail, app_pass, wiz.status)
+        if auto_ok:
+            if do_setup:
+                wiz.status("Прокликиваю настройку сайта…")
+                await bnd.setup_site(session.page, sel)
+            wiz.status("✅ Вход выполнен автоматически")
+        else:
+            wiz.status("⚠️ Авто-вход не удался (причина — строкой выше).")
+            wiz.status("Окно браузера оставлено открытым — доделайте вход вручную и нажмите «Сохранить».")
+    except core_binodex.LoginRateLimited as limited:
+        # Отдельно от прочих сбоев: пока лимит горит, КАЖДЫЙ новый запрос кода его продлевает,
+        # так что повторять вход прямо сейчас — гарантированно мимо.
+        logger.warning("binodex_flow лимит кодов: %s", limited)
+        wiz.status(f"⛔ binodex отказал по лимиту запросов кода: {limited}")
+        wiz.status("Лимит остывает ~25 минут. Окно оставлено открытым: можно дождаться и "
+                   "доделать вход вручную, но новые коды сейчас не запрашивать.")
     except (Exception,) as error:
         logger.warning("binodex_flow auto: %s", error)
         wiz.status(f"⚠️ Авто-флоу прервался: {_fmt_err(error)}")
         wiz.status("Окно браузера оставлено открытым — доделайте вход вручную и нажмите «Сохранить».")
-
-    # Очистка писем Privy при успешном авто-входе (одноразовые коды).
-    if auto_ok and conn is not None:
-        try:
-            removed = await asyncio.to_thread(imap_code.purge_privy, conn)
-            if removed:
-                wiz.status(f"Удалено писем Privy: {removed}")
-        except (Exception,):
-            pass
-    if conn is not None:
-        await asyncio.to_thread(imap_code.logout, conn)
 
     if session is None:
         # launch мог упасть уже ПОСЛЕ подъёма релея (session.close() не вызовется) — гасим сами.

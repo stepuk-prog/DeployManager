@@ -19,16 +19,10 @@ POCKET_PARAM_NAMES = {
     "s30": "s30_css",
 }
 
-# ----- Privy (binodex email-OTP) -----
-# Код приходит с ДВУХ адресов (no-reply@privy.io И no-reply@mail.privy.io) — фильтр по
-# домену (подстрока в FROM матчит оба).
-PRIVY_FROM = "privy.io"
-PRIVY_SUBJECT_HINT = "login code"   # тема: "Your login code for BinoDex"
-PRIVY_CODE_WAIT_SECONDS = 120
-PRIVY_CODE_POLL_EVERY = 3
-
-# Обязательные селекторы логина binodex — без них вход невозможен (падаем понятно).
-REQUIRED_LOGIN_SELECTORS = ("login_open", "login_email", "login_submit", "login_code_inputs")
+# Вход на binodex (email-OTP) констант здесь БОЛЬШЕ НЕ ДЕРЖИТ: отправители письма, подстрока
+# темы, ключи сессии и обязательные селекторы живут в `settings.binodex_settings` и читаются
+# ядром (`binocore.binodex`). Прежние PRIVY_* знали только Privy и потому слепли на аккаунте с
+# собственной авторизацией binodex — см. докстринг apps/binodex.py.
 
 # Шаги настройки сайта binodex (par_name «открыть» → «выбрать»). После всех — повторный
 # клик по setup_settings_open закрывает окно. Настройки персистят за аккаунтом.
