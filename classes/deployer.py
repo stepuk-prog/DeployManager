@@ -190,8 +190,16 @@ class Deployer:
         → доп. установки (extra_cmds, напр. 'playwright install firefox'). Команды из README — в коде."""
         folder = shlex.quote(remote_folder.rstrip("/"))
         venv = config.VENV_DIR
+        # venv, у которого не запускается pip, пересоздаём. Так бывает, если каталог
+        # проекта переименовали после создания venv: скрипты venv/bin держат в шебанге
+        # СТАРЫЙ абсолютный путь. 23-09 на cluster1/cluster2 venv DispatcherCtl жил с
+        # шебангом /opt/dispatcherctl/… в /opt/DispatcherCtl — `venv/bin/pip` падал
+        # «No such file or directory», провижининг ломался, а httpx так и не ставился
+        # (пункт 55). Python из такого venv при этом работает — потому и не замечали.
         steps = [
             f"cd {folder}",
+            f"{{ test ! -d {venv} || {venv}/bin/pip --version >/dev/null 2>&1 "
+            f"|| {{ echo 'venv битый (pip не запускается) — пересоздаю' >&2; rm -rf {venv}; }}; }}",
             f"{{ test -d {venv} || {config.PYTHON_BIN} -m venv {venv}; }}",
             f"{venv}/bin/pip install -q -U pip",
             f"{venv}/bin/pip install -q -r requirements.txt",
