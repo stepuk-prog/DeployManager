@@ -14,6 +14,7 @@ class LogSink:
         self.view = view
         self.page = page
         self._buf = ""
+        self._lines: list[str] = []   # плоский текст лога — для кнопки «Копировать лог»
 
     def write(self, s: str) -> int:
         self._buf += s
@@ -33,7 +34,12 @@ class LogSink:
         """Очистить лог-панель (кнопка «Очистить лог»)."""
         self.view.controls.clear()
         self._buf = ""
+        self._lines.clear()
         self._update()
+
+    def text(self) -> str:
+        """Весь лог одним текстом (кнопка «Копировать лог»)."""
+        return "\n".join(self._lines + ([self._buf] if self._buf else []))
 
     # базовый цвет всей строки (отчёты деплоя). красный — ловит ⚠️⚠️ до одиночного ⚠️
     _RED = ("❌", "⛔", "‼️", "🛑", "FAILED", "Ошибка", "ошибка", "⚠️⚠️")
@@ -94,9 +100,13 @@ class LogSink:
         line = line or " "
         spans = self._spans(line)
         base = self._base_color(line)
-        txt = (ft.Text(spans=spans, selectable=True, font_family="monospace", size=12, color=base)
+        # selectable=False: выделение даёт общий SelectionArea вокруг панели (gui/app.py).
+        # Со своим selectable у каждой строки выделение не переходило на соседнюю —
+        # копировать можно было только построчно.
+        txt = (ft.Text(spans=spans, font_family="monospace", size=12, color=base)
                if spans else
-               ft.Text(line, selectable=True, font_family="monospace", size=12, color=base))
+               ft.Text(line, font_family="monospace", size=12, color=base))
+        self._lines.append(line)
         self.view.controls.append(txt)
         self._update()
 

@@ -33,6 +33,12 @@ async def main(page: ft.Page):
     except Exception:
         page.services = [file_picker]
 
+    clipboard = ft.Clipboard()
+    try:
+        page.services.append(clipboard)
+    except Exception:
+        page.services = [*(page.services or []), clipboard]
+
     sink = LogSink(log_view, page)
     flet_ui = FletUi(page)
     spinner = ft.ProgressRing(visible=False, width=18, height=18)
@@ -188,6 +194,15 @@ async def main(page: ft.Page):
         branch_buttons.append(btn)
         return btn
 
+    async def copy_log(_):
+        text = sink.text()
+        if not text.strip():
+            status_lbl.value = "лог пуст — копировать нечего"
+        else:
+            await clipboard.set(text)
+            status_lbl.value = f"📋 лог скопирован ({text.count(chr(10)) + 1} строк)"
+        page.update()
+
     home_controls = [
         ft.Row([path_field, ft.Button(content=ft.Text("📂 Обзор…"), on_click=choose_project)]),
         ft.Row([ft.Text("Версия:"), version_lbl]),
@@ -217,10 +232,14 @@ async def main(page: ft.Page):
                         color=ft.Colors.TEAL_300)]),
         ft.Row([tool_btn(t) for t in tools.TOOLS], wrap=True),
         ft.Row([spinner, status_lbl,
-                ft.TextButton(content=ft.Text("🧹 Очистить лог"),
-                              on_click=lambda _: sink.clear())],
+                ft.Row([ft.TextButton(content=ft.Text("📋 Копировать лог"),
+                                      on_click=copy_log),
+                        ft.TextButton(content=ft.Text("🧹 Очистить лог"),
+                                      on_click=lambda _: sink.clear())])],
                alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-        ft.Container(content=log_view, expand=True, padding=8,
+        # SelectionArea — выделение мышью сквозь строки. ListView строит только видимые
+        # строки, поэтому длинный кусок с прокруткой надёжнее брать «Копировать лог».
+        ft.Container(content=ft.SelectionArea(content=log_view), expand=True, padding=8,
                      border=ft.Border.all(1, ft.Colors.GREY), border_radius=6),
     ]
     page.add(*home_controls)
