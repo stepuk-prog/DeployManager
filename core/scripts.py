@@ -69,6 +69,22 @@ SCRIPTS: list[dict] = [
         "desc": "Read-only свод здоровья: etcd/Patroni/HAProxy/systemd по всему флоту.",
     },
     {
+        "key": "morning_sweep",
+        "label": "Утренний проход",
+        "icon": "🌅",
+        "color": "TEAL_600",
+        "file": "morning-sweep.sh",
+        "scope": "local",
+        "args": [
+            # всё, что понимает `date -d`: «yesterday 18:00», «2026-09-23 00:10», «6 hours ago»
+            {"prompt": "Начало окна (date -d)", "flag": "--since", "default": "yesterday 18:00"},
+        ],
+        "apply_flag": None,            # read-only, гейт не нужен
+        "danger": False,
+        "desc": "Read-only свод ночи по клиентским нодам: ошибки/предупреждения логов "
+                "по типам, failed-юниты, выходы по сбою, память.",
+    },
+    {
         "key": "whitelist_ip",
         "label": "Whitelist IP",
         "icon": "🛡️",
