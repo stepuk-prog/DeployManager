@@ -65,8 +65,9 @@ _BASE_STEPS = [
     ("dropins", "Drop-in'ы (needrestart / GPU / tmpfiles / nic)",
      "needrestart (не авто-рестартить демоны) + apt GPU-blacklist + tmpfiles-уборка "
      "браузер-профилей + nic-ring-tune.", False),
-    ("haproxy", "HAProxy 3.1.0 из исходников",
-     "Скачивает (по IPv4) и собирает бинарь haproxy — общий для клиента и члена кластера.", True),
+    ("haproxy", "HAProxy 3.2 LTS (пакет из PPA)",
+     "Ставит пакет haproxy из ppa:vbernat/haproxy-3.2 — бинарь общий для клиента и члена "
+     "кластера; пакетный юнит не запускает (им распоряжается роль).", True),
 ]
 
 

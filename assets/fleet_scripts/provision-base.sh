@@ -4,7 +4,7 @@
 # Запускать НА новом узле под root. Идемпотентно (повторный запуск безопасен).
 # Делает: vova+root-ключи+polkit, hostname/tz, локали, пакеты, python3.11 (deadsnakes),
 #         sshd-harden, fail2ban, UFW (только 22), needrestart/GPU/tmpfiles/nic drop-in'ы,
-#         сборку+установку HAProxy-бинаря.
+#         HAProxy 3.2 LTS пакетом из PPA vbernat (бинарь; юнит решает роль).
 # НЕ делает: РОЛЕВУЮ часть — haproxy .cfg/юнит (клиент → provision-client.sh; член
 #            кластера → provision-cluster-member.sh) и разворачивание watchdog/программ
 #            (через диспетчер/DeployManager).
@@ -31,7 +31,7 @@ esac; done
 # root нужен только для фактического прогона шагов (--list-steps уже вышел выше).
 [[ $EUID -eq 0 ]] || { echo "Запускать под root."; exit 1; }
 
-HAPROXY_VER=3.1.0
+HAPROXY_BRANCH=3.2   # LTS-ветка PPA ppa:vbernat/haproxy-<ветка>; весь флот на ней с 26-08-2026
 G='\033[0;32m'; N='\033[0m'
 step(){ echo -e "\n${G}━━━ $* ━━━${N}"; }
 
@@ -258,19 +258,33 @@ EOF
 }
 
 step_haproxy() {
-  step "HAProxy $HAPROXY_VER из исходников (бинарь — общий для клиента и члена кластера)"
-  if ! haproxy -v 2>/dev/null | grep -q "$HAPROXY_VER"; then
-    cd /usr/local/src
-    # -4: форсируем IPv4. haproxy.org отдаёт AAAA; на узле без IPv6-маршрута wget дёргал
-    # IPv6 → "network failure" (exit 4). Инцидент VIDEO-3 2026-07-23. -4 берёт A-запись.
-    wget -4 -q "https://www.haproxy.org/download/${HAPROXY_VER%.*}/src/haproxy-${HAPROXY_VER}.tar.gz"
-    tar -xzf "haproxy-${HAPROXY_VER}.tar.gz"; cd "haproxy-${HAPROXY_VER}"
-    make -j"$(nproc)" TARGET=linux-glibc USE_OPENSSL=1 USE_PCRE=1 USE_ZLIB=1
-    make install
-    ln -sf /usr/local/sbin/haproxy /usr/sbin/haproxy
+  step "HAProxy $HAPROXY_BRANCH (LTS) пакетом из PPA vbernat — бинарь общий для клиента и члена кластера"
+  # С 26-08-2026 флот на пакете, а не на самосборе: собранный бинарь жил вне apt (ни обновлений,
+  # ни пина), а сборка на живом узле давала 100% CPU и будила вотчдог. Процедура и грабли —
+  # Clusters/docs/haproxy/haproxy.md. До 23-09 этот шаг всё ещё собирал 3.1.0 из исходников.
+  export DEBIAN_FRONTEND=noninteractive
+  # Узел, где раньше собирали: симлинк /usr/sbin/haproxy → /usr/local/sbin dpkg не перезапишет.
+  if [[ -L /usr/sbin/haproxy ]]; then rm -f /usr/sbin/haproxy; fi
+  local have
+  have=$(dpkg-query -W -f='${db:Status-Status} ${Version}' haproxy 2>/dev/null || true)
+  if [[ "$have" != "installed ${HAPROXY_BRANCH}."* ]]; then
+    apt-get install -y -qq software-properties-common
+    add-apt-repository -y "ppa:vbernat/haproxy-${HAPROXY_BRANCH}"
+    apt-get update -qq
+    # --force-confold: пакет несёт свой /etc/haproxy/haproxy.cfg — без флага dpkg спросит, чей
+    # конфиг оставить, и без терминала упадёт («end of file on stdin at conffile prompt»).
+    apt-get install -y -qq -o Dpkg::Options::=--force-confold haproxy
   fi
-  id haproxy &>/dev/null || { groupadd -r haproxy; useradd -r -g haproxy -s /usr/sbin/nologin -d /var/lib/haproxy haproxy; }
-  install -d -o haproxy -g haproxy /var/lib/haproxy
+  # Пакетный haproxy.service не держим запущенным: чей юнит работает — решает РОЛЬ. Клиент его
+  # маскирует и поднимает haproxy_client.service (provision-client.sh), член кластера кладёт свой
+  # haproxy.service в /etc/systemd/system — тот перекрывает пакетный. Маскировать здесь нельзя:
+  # у члена кластера юнит с тем же именем, маска заняла бы его путь. И трогаем только пакетный
+  # юнит (своего в /etc/systemd/system нет) — повторный прогон базы на живом узле кластера
+  # иначе погасил бы вход в БД.
+  if [[ ! -e /etc/systemd/system/haproxy.service ]]; then
+    systemctl disable --now haproxy.service 2>/dev/null || true
+  fi
+  haproxy -v | head -1
 }
 
 # ─────────────────────────────────────────────────────────────────────────────

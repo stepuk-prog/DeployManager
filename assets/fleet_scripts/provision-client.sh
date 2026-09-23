@@ -6,7 +6,7 @@
 #
 # По умолчанию СНАЧАЛА гоняет общую базу (provision-base.sh: локали, пакеты, vova+
 # ключ, sshd-harden, fail2ban, UFW, needrestart, GPU-blacklist, tmpfiles, nic-tune,
-# сборку HAProxy-бинаря) — так `provision-client.sh --hostname ... --vova-pubkey ...`
+# HAProxy пакетом из PPA) — так `provision-client.sh --hostname ... --vova-pubkey ...`
 # полностью настраивает клиентский узел одним прогоном (как раньше).
 # С флагом --tail-only база пропускается (её уже прогнали отдельно, напр. из DeployManager
 # перед диалогом «тип ноды») — ставится только ролевой client-хвост.
@@ -47,8 +47,8 @@ fi
 command -v haproxy >/dev/null || { echo "haproxy не установлен — сперва прогони provision-base.sh"; exit 1; }
 
 step "client haproxy.cfg + haproxy_client.service"
-# На узле без дистрибутивного haproxy каталог /etc/haproxy не создаётся
-# (сборка из исходников ставит только бинарь) — создаём явно.
+# Пакет /etc/haproxy создаёт сам; install -d — страховка на узле со старым самосбором,
+# который ставил только бинарь.
 install -d -m 755 /etc/haproxy
 cat > /etc/haproxy/haproxy.cfg <<EOF
 global
@@ -111,9 +111,8 @@ Description=HAProxy Client Load Balancer
 After=network.target
 
 [Service]
-# /usr/sbin/haproxy, а не /usr/local/sbin: путь есть в ОБОИХ вариантах установки — при сборке
-# из исходников provision-base делает туда симлинк, а пакет из ppa:vbernat кладёт бинарь прямо
-# сюда. На флоте с 26-08-2026 стоит именно пакет, и /usr/local/sbin/haproxy там не существует.
+# /usr/sbin/haproxy: туда кладёт бинарь пакет из ppa:vbernat (provision-base, шаг haproxy).
+# /usr/local/sbin/haproxy был только у старого самосбора — на флоте его нет с 26-08-2026.
 ExecStart=/usr/sbin/haproxy -W -db -f /etc/haproxy/haproxy.cfg
 # Порядок важен: сперва снимаем состояние серверов в файл, потом сигналим мастеру —
 # иначе новый процесс поднимется со «всё живо» (см. server-state-file в haproxy.cfg).
@@ -126,6 +125,10 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 chmod 0644 /etc/systemd/system/haproxy_client.service   # юнит НЕ executable (см. ниже)
+# Пакетный haproxy.service маскируем: он читает тот же /etc/haproxy/haproxy.cfg и при первом же
+# старте (apt-апгрейд, ребут) занял бы порт нашего haproxy_client. Так стоит на всём флоте
+# (docs/haproxy/haproxy.md, шаг 3); у самосбора пакетного юнита не было — отсюда и не маскировали.
+systemctl mask haproxy.service
 systemctl daemon-reload
 systemctl enable --now haproxy_client.service
 

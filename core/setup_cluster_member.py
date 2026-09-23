@@ -103,12 +103,17 @@ def _install_patroni() -> str:
 
 
 def _install_haproxy() -> str:
+    # Пакет из PPA, как на всём флоте с 26-08-2026 (Clusters/docs/haproxy/haproxy.md), а не
+    # самосбор 3.1.0: тот жил вне apt и грузил живой узел сборкой. Пакетный юнит гасим, пока
+    # своего haproxy.service в /etc/systemd/system нет, — его кладёт шаг конфигов, и он
+    # перекрывает пакетный (маскировать нельзя: имя то же). --force-confold — см. doc.
     return (
-        "apt-get install -y build-essential libssl-dev libpcre3-dev zlib1g-dev rsyslog\n"
-        "cd /usr/local/src && wget -q https://www.haproxy.org/download/3.1/src/haproxy-3.1.0.tar.gz\n"
-        "tar -xzf haproxy-3.1.0.tar.gz && cd haproxy-3.1.0\n"
-        'make -j"$(nproc)" TARGET=linux-glibc USE_OPENSSL=1 USE_PCRE=1 USE_ZLIB=1 && make install\n'
-        "ln -sf /usr/local/sbin/haproxy /usr/sbin/haproxy"
+        "apt-get install -y software-properties-common rsyslog\n"
+        "[ -L /usr/sbin/haproxy ] && rm -f /usr/sbin/haproxy\n"
+        "add-apt-repository -y ppa:vbernat/haproxy-3.2 && apt-get update\n"
+        "DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confold haproxy\n"
+        "[ -e /etc/systemd/system/haproxy.service ] || systemctl disable --now haproxy.service\n"
+        "haproxy -v | head -1"
     )
 
 
@@ -167,10 +172,10 @@ def _build_steps(p: Params) -> list[Step]:
              "Patroni — оркестратор PG-кластера (промоушен/failover через etcd). На 24.04 system "
              "pip заблокирован (PEP 668) → ставим в /opt/patroni-venv, симлинки в /usr/local/bin.",
              cmd=_install_patroni()),
-        Step("2d. HAProxy 3.1.0 (из исходников)",
+        Step("2d. HAProxy 3.2 LTS (пакет из PPA)",
              "HAProxy на cluster-ноде (порт 6442) — точка входа клиентов, Patroni-aware "
-             "(httpchk /primary). Собирается из исходников (make) — небыстро (~1-2 мин). Тот же "
-             "билд, что на остальных cluster-нодах.",
+             "(httpchk /primary). Пакет из ppa:vbernat/haproxy-3.2 — та же версия, что на всём "
+             "флоте. Пакетный юнит гасим: наш haproxy.service положит шаг конфигов.",
              cmd=_install_haproxy()),
         Step("2e. Users/groups + каталоги",
              "Служебные пользователи/группы (etcd/etcd_group, patroni_group для postgres, haproxy) "
