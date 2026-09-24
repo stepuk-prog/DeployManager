@@ -652,22 +652,167 @@ def has_session(state: Mapping[str, object], keys=SESSION_KEYS) -> bool:
     return bool(names & set(keys))
 
 
+# ── селекторы сайта вне логина: значения по умолчанию ─────────────────────────────────────────
+# Всё, что программа ищет на странице binodex, живёт в binodex.settings.binodex_settings: вёрстка
+# у binodex меняется без предупреждения, и чинить её надо правкой строки, а не раскаткой кода.
+# 24-09-2026 так и вышло: иконки чипов легенды ушли в SVG-спрайт, а признак чипа был зашит в
+# код восьми программ — индикаторы тихо множились до трёх копий, пока правку не раскатали.
+# Здесь — только ЗАПАСНЫЕ значения на случай, если строки в БД нет (старая БД, опечатка в имени):
+# старт от этого не падает, программа работает по последней известной вёрстке.
+SITE_DEFAULTS = {
+    # бэкдроп MUI под модалкой-анонсом binodex; ест pointer events
+    'modal_backdrop': '.MuiBackdrop-root',
+    # корни модалок, внутри которых ищется закрывашка
+    'modal_roots': '[role="presentation"], [role="dialog"], [aria-modal="true"]',
+    # служебные признаки закрывашки — НЕ подписи вроде «OK» (в промо такая уводит с /trade)
+    'modal_close': ('[aria-label*="close" i], [data-testid*="close" i], button[class*="close" i], '
+                    '[class*="closeBtn" i], [class*="close_btn" i]'),
+    # метка OTC-варианта в строке модалки выбора пары ('EUR/USD OTC 85%')
+    'pair_otc_label': 'OTC',
+    # пункт меню индикаторов; нужный выбирается ПО ТЕКСТУ (см. indicator_labels)
+    'indicator_menu_item': 'button.chart_indicator',
+    # иконка кнопки действия на чипе легенды — по ней чип отличается от прочего текста:
+    # SVG-спрайт (с 24-09-2026), маска-фолбэк, пока спрайт не подгружен, и прежний <img>
+    'legend_chip_icon': 'use[href^="#trade-chart-"], [style*="/img/chart/"], img[src*="/img/chart/"]',
+    # крестик удаления на чипе легенды (снимаем лишние копии индикатора)
+    'legend_chip_delete': ('button use[href="#trade-chart-cross"], button [style*="/img/chart/cross"], '
+                           'button img[src*="cross"]'),
+    # «пункт меню=подпись чипа легенды»: binodex пишет на чипе сокращение, а не имя из меню
+    'indicator_labels': 'Whale Absorption=Whale, Stochastic=Stoch, Volume=VOL',
+}
+
+
+def site_setting(rows, name: str) -> str:
+    """Значение `name` из binodex_settings, а нет строки или она пустая — из SITE_DEFAULTS.
+
+    `rows` — выборка (строки с par_name/par_value) либо уже готовый словарь. Имя, которого нет
+    ни там, ни там, — ошибка программиста, а не БД: KeyError сразу на старте."""
+    if isinstance(rows, Mapping):
+        value = rows.get(name)
+    else:
+        value = next((r['par_value'] for r in rows or () if r['par_name'] == name), None)
+    value = (value or '').strip()
+    return value or SITE_DEFAULTS[name]
+
+
+def split_selectors(value: str) -> list[str]:
+    """CSS-список через запятую → отдельные селекторы; запятые внутри (), [] и кавычек не режут.
+
+    В БД список хранится ОДНОЙ строкой, валидной как CSS целиком: её можно вставить в консоль
+    браузера и проверить как есть. Делить нужно там, где важно, какой из признаков сработал."""
+    out, buf, depth, quote = [], [], 0, ''
+    for ch in value or '':
+        if quote:
+            quote = '' if ch == quote else quote
+        elif ch in '"\'':
+            quote = ch
+        elif ch in '([':
+            depth += 1
+        elif ch in ')]':
+            depth -= 1
+        elif ch == ',' and depth == 0:
+            out.append(''.join(buf).strip())
+            buf = []
+            continue
+        buf.append(ch)
+    out.append(''.join(buf).strip())
+    return [s for s in out if s]
+
+
+def indicator_labels(value: str | None) -> dict[str, str]:
+    """`indicator_labels` → {пункт меню: подпись чипа}, поверх значений по умолчанию.
+
+    Поверх, а не вместо: строка в БД может перечислять не всё, а программа не должна падать
+    из-за того, что кто-то обновил одну подпись и забыл переписать остальные."""
+    labels = {}
+    for raw in (SITE_DEFAULTS['indicator_labels'], value or ''):
+        for pair in raw.split(','):
+            menu, sep, badge = pair.partition('=')
+            if sep and menu.strip() and badge.strip():
+                labels[menu.strip()] = badge.strip()
+    return labels
+
+
+# ── дрейф вёрстки: один алерт на процесс ──────────────────────────────────────────────────────
+_DRIFT_ALERTED: set[str] = set()
+# Как правка строки доходит до программы. Большинство читает binodex_settings на старте — им
+# нужен перезапуск; BinodexScreens сбрасывает кэш селекторов сам (SetupError, часовой ребут) и
+# переопределяет фразу у себя, иначе алерт советовал бы лишний рестарт 68 инстансов.
+DRIFT_APPLY = 'затем перезапуск программы'
+
+
+def selector_drift(logger, name: str, selector: str, detail: str) -> bool:
+    """Громко сообщить, что селектор `name` из binodex_settings перестал совпадать с сайтом.
+
+    До 24-09-2026 такие случаи жили только в warning: программа принимала «селектор ничего не
+    находит» за «на binodex сейчас пусто» и часами ждала — юнит зелёный, в теме ошибок тишина.
+    Теперь это ERROR (уходит в тему ошибок), но ОДИН раз на процесс для каждого имени: вёрстка
+    не починится сама, а повтор на каждом опционе утопил бы тему. Возврат — ушёл ли алерт
+    сейчас (вызывающий по нему решает, писать ли подробности)."""
+    if name in _DRIFT_ALERTED:
+        return False
+    _DRIFT_ALERTED.add(name)
+    logger.error(f'binodex сменил вёрстку: селектор {name} = {selector!r} — {detail}. Правка — '
+                 f'строка {name} в binodex.settings.binodex_settings (код трогать не нужно), '
+                 f'{DRIFT_APPLY}')
+    return True
+
+
+# ── модалка выбора пары: селектор ослеп или пар правда нет ────────────────────────────────────
+# Промах выбора пары выглядит одинаково в двух противоположных ситуациях: binodex держит модалку
+# пустой (штатный тест-режим, ждать правильно) и пары на экране есть, но селектор строки их не
+# видит (сменилась вёрстка, ждать бессмысленно). Различаем по тексту: ищем имя пары ВНУТРИ самой
+# модалки — от поля ввода вверх до общего предка с кнопкой категории, и дальше вверх, пока не
+# упрёмся в предка кнопки выбора пары (шапка страницы тоже пишет имя текущей пары, её не берём).
+PAIR_BLIND_JS = r"""
+({item, input, category, opener, pair}) => {
+  if (document.querySelectorAll(item).length) return false;
+  const inp = document.querySelector(input), cat = document.querySelector(category);
+  if (!inp || !cat) return null;
+  let scope = inp;
+  while (scope && !scope.contains(cat)) scope = scope.parentElement;
+  if (!scope) return null;
+  const op = opener ? document.querySelector(opener) : null;
+  while (scope.parentElement && scope.parentElement !== document.body
+         && !(op && scope.parentElement.contains(op))) scope = scope.parentElement;
+  const needle = pair.toLowerCase();
+  const has = (el) => (el.textContent || '').toLowerCase().includes(needle);
+  for (const el of scope.querySelectorAll('*')) {
+    if (!has(el) || [...el.children].some(has)) continue;
+    if (el.offsetWidth || el.offsetHeight) return true;
+  }
+  return false;
+}
+"""
+
+
+async def pair_items_blind(page, *, item: str, input_sel: str, category: str, opener: str | None,
+                           pair: str, eval_js=None) -> bool | None:
+    """Ослеп ли селектор строки пары: в открытой модалке имя пары ВИДНО, а `item` не находит
+    ни одной строки. False — селектор строки что-то видит либо пары на экране нет (пусто по
+    делу); None — модалки нет или спросить не вышло (судить не о чем)."""
+    eval_js = eval_js or default_eval_js
+    try:
+        return await eval_js(page, PAIR_BLIND_JS, {'item': item, 'input': input_sel,
+                                                   'category': category, 'opener': opener,
+                                                   'pair': pair})
+    except (Exception,):
+        return None
+
+
 # ── модалка поверх страницы ───────────────────────────────────────────────────────────────────
 # Кнопка закрытия ВНУТРИ модалки, которую binodex поднимает поверх /trade (онбординг, промо,
 # анонс). Ищем ТОЛЬКО по служебным признакам закрывашки (aria-label / data-testid / класс со
-# словом close) и по значку-крестику — намеренно НЕ по подписям вроде «OK» или «Got it»:
-# в промо-модалке такая кнопка ведёт на внешнюю страницу, то есть «закрытие» увело бы бота с
-# торговой страницы. Ничего не нашли — вернём пусто, у вызывающего есть свои пути (Escape,
-# клик по краю бэкдропа, DOM-событие).
+# словом close, список — строка modal_close в БД) и по значку-крестику — намеренно НЕ по
+# подписям вроде «OK» или «Got it»: в промо-модалке такая кнопка ведёт на внешнюю страницу, то
+# есть «закрытие» увело бы бота с торговой страницы. Ничего не нашли — вернём пусто, у
+# вызывающего есть свои пути (Escape, клик по краю бэкдропа, DOM-событие).
 MODAL_CLOSE_JS = """
-() => {
-  const CROSS = ['\u00d7', '\u2715', '\u2716', '\u2717', '\u2718', 'x'];
-  const BY_ATTR = ['[aria-label*="close" i]', '[data-testid*="close" i]',
-                   'button[class*="close" i]', '[class*="closeBtn" i]', '[class*="close_btn" i]'];
+({roots, close}) => {
+  const CROSS = ['×', '✕', '✖', '✗', '✘', 'x'];
   const visible = (el) => !!(el.offsetWidth || el.offsetHeight);
-  const roots = document.querySelectorAll('[role="presentation"], [role="dialog"], [aria-modal="true"]');
-  for (const root of roots) {
-    for (const sel of BY_ATTR) {
+  for (const root of document.querySelectorAll(roots)) {
+    for (const sel of close) {
       for (const btn of root.querySelectorAll(sel)) {
         if (!visible(btn)) continue;
         try { btn.click(); return sel; } catch (e) {}
@@ -676,7 +821,7 @@ MODAL_CLOSE_JS = """
     for (const btn of root.querySelectorAll('button,[role="button"]')) {
       if (!visible(btn)) continue;
       if (CROSS.includes((btn.innerText || '').trim().toLowerCase())) {
-        try { btn.click(); return '\u043a\u0440\u0435\u0441\u0442\u0438\u043a'; } catch (e) {}
+        try { btn.click(); return 'крестик'; } catch (e) {}
       }
     }
   }
@@ -685,8 +830,12 @@ MODAL_CLOSE_JS = """
 """
 
 
-async def close_modal_button(page, *, eval_js=None) -> str:
+async def close_modal_button(page, *, eval_js=None, roots: str | None = None,
+                             close: str | None = None) -> str:
     """Нажать крестик модалки binodex. Возврат — по какому признаку нашли кнопку ('' — не нашли).
+
+    `roots`/`close` — строки modal_roots/modal_close из binodex_settings; None — значения по
+    умолчанию (SITE_DEFAULTS), то есть программа, не читающая эти строки, работает как раньше.
 
     Нужен потому, что остальные пути лесенки бьют по БЭКДРОПУ, а модалку-анонс binodex рисует
     картинкой поверх него: клик в центр Playwright не пропускает («subtree intercepts pointer
@@ -694,8 +843,10 @@ async def close_modal_button(page, *, eval_js=None) -> str:
     собрали. Крестик закрывает её честно, и она уходит ИЗ КАДРА, а не только перестаёт мешать
     кликам. Ошибки не критичны: не вышло — вызывающий идёт дальше по своей лесенке."""
     eval_js = eval_js or default_eval_js
+    arg = {'roots': roots or SITE_DEFAULTS['modal_roots'],
+           'close': split_selectors(close or SITE_DEFAULTS['modal_close'])}
     try:
-        return await eval_js(page, MODAL_CLOSE_JS) or ''
+        return await eval_js(page, MODAL_CLOSE_JS, arg) or ''
     except (Exception,):
         return ''
 
