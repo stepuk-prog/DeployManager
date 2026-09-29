@@ -111,7 +111,7 @@ POOL_CLOSE_TIMEOUT = 5.0
 MESSAGES = {
     'pool_created': "✅ Пул '{name}' (→ {db_name}) создан (min={min_size}, max={max_size})",
     'pool_attempt': "⚠️ Попытка {attempt}/{retries} пула '{name}': {error}",
-    'pool_create_failed': "❌ Не удалось создать пул '{name}' после всех попыток",
+    'pool_create_failed': "❌ Не удалось создать пул '{name}' после {retries} попыток",
     'pool_closed': "Пул '{name}' закрыт",
     'pool_close_error': "Ошибка закрытия пула '{name}': {error}",
     'pool_recreating': "Пересоздаю пул '{name}'",
@@ -194,7 +194,11 @@ class BaseDatabase:
                 if attempt < retries:
                     await asyncio.sleep(delay * attempt)
                 else:
-                    _logger.error(_msg('pool_create_failed', name=name))
+                    # ERROR — только у серии попыток (старт): на горячем пути попытка одна, её уже записал
+                    # warning выше; итог недоступности — 'restore_failed', раз на серию. Прежде — 6 ERROR на
+                    # один запрос при лежащей БД (0.8.2; проверка BinoAlpha 29-09, п.2.20).
+                    if retries > 1:
+                        _logger.error(_msg('pool_create_failed', name=name, retries=retries))
                     raise
 
     async def connect(self, retries: int = 5, delay: float = 2.0, names=None):
@@ -416,7 +420,8 @@ class BaseDatabase:
             try:
                 await self._recreate_pool(db)
             except (Exception,) as pool_error:
-                _logger.error(_msg('recreate_failed', db=db, error=pool_error))
+                # warning: итог для оператора — 'restore_failed' ниже (error, раз на серию, 0.8.2)
+                _logger.warning(_msg('recreate_failed', db=db, error=pool_error))
             if db not in self._recovery_error_logged:
                 _logger.error(_msg('restore_failed', db=db))
                 self._recovery_error_logged.add(db)
