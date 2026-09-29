@@ -61,20 +61,38 @@ def parse_manifest(text: str | None) -> dict | None:
         return None
 
 
-def _rev_count(project_dir: str, rng: str) -> int | None:
-    """git rev-list --count <rng> → число или None (коммит не в истории / сбой git)."""
+def _rev_count(project_dir: str, rng: str, paths: "list[str] | None" = None) -> int | None:
+    """git rev-list --count <rng> [-- paths] → число или None (коммит не в истории / сбой git).
+    paths — считать только коммиты, задевшие эти каталоги (абсолютные пути внутри репо)."""
+    args = ["rev-list", "--count", rng]
+    if paths:
+        args += ["--", *paths]
     try:
-        out = _git(project_dir, "rev-list", "--count", rng)
+        out = _git(project_dir, *args)
     except RuntimeError:
         return None
     return int(out) if out.isdigit() else None
 
 
-def lag_text(project_dir: str, node_commit: str, local_commit: str) -> str:
+def _fmt_lag(behind: int, ahead: int) -> str:
+    if behind and not ahead:
+        return f"отстаёт на {behind}"
+    if ahead and not behind:
+        return f"впереди на {ahead}"
+    return f"разошлись (−{behind}/+{ahead})"
+
+
+def lag_text(project_dir: str, node_commit: str, local_commit: str,
+             paths: "list[str] | None" = None) -> str:
     """Текст отставания ноды относительно локальной версии (по git-истории проекта):
     «up-to-date» / «отстаёт на N» / «впереди на N» / «разошлись (−b/+a)» /
     «вне истории репозитория» / «версия неизвестна». Единый источник для дашборда и
-    сверки версий (в т.ч. инфра-компонентов) — чтобы вывод был одинаковым."""
+    сверки версий (в т.ч. инфра-компонентов) — чтобы вывод был одинаковым.
+
+    paths — каталоги кода компонента (инфра: WD/GD/… + common). Репозиторий
+    Dispatcher2.0 общий, и счёт по всему репо врёт: WD «отставал на 20», хотя из
+    20 коммитов его код задел один (29-09). С paths число — по коду компонента,
+    а репо-счёт дописывается хвостом, если отличается: «отстаёт на 1 · репо −20»."""
     if not node_commit:
         return "версия неизвестна"
     if node_commit == local_commit:
@@ -83,8 +101,15 @@ def lag_text(project_dir: str, node_commit: str, local_commit: str) -> str:
     ahead = _rev_count(project_dir, f"{local_commit}..{node_commit}")
     if behind is None or ahead is None:
         return "вне истории репозитория"
-    if behind and not ahead:
-        return f"отстаёт на {behind}"
-    if ahead and not behind:
-        return f"впереди на {ahead}"
-    return f"разошлись (−{behind}/+{ahead})"
+    if not paths:
+        return _fmt_lag(behind, ahead)
+    c_behind = _rev_count(project_dir, f"{node_commit}..{local_commit}", paths)
+    c_ahead = _rev_count(project_dir, f"{local_commit}..{node_commit}", paths)
+    if c_behind is None or c_ahead is None:
+        return _fmt_lag(behind, ahead)
+    if (c_behind, c_ahead) == (behind, ahead):
+        return _fmt_lag(behind, ahead)
+    repo = (f"−{behind}" if behind and not ahead else
+            f"+{ahead}" if ahead and not behind else f"−{behind}/+{ahead}")
+    code = "код тот же" if not (c_behind or c_ahead) else _fmt_lag(c_behind, c_ahead)
+    return f"{code} · репо {repo}"

@@ -21,7 +21,7 @@ class NodeStatus:
 
 
 async def _one(ssh: SshClient, node, remote_folder: str, local: LocalVersion,
-               project_dir: str | None) -> NodeStatus:
+               project_dir: str | None, paths: "list[str] | None" = None) -> NodeStatus:
     ip = node["ip_address"]
     name = node["server_name"] or node["hostname"]
     if not await ssh.ping(ip):
@@ -38,17 +38,19 @@ async def _one(ssh: SshClient, node, remote_folder: str, local: LocalVersion,
         note = "локально есть незакоммиченные правки" if local.dirty else ""
         return NodeStatus(name, ip, state, short, lag="up-to-date", note=note)
     # отстаёт/впереди/разошлись — счётчик коммитов по git-истории (как в стандартном дашборде)
-    lag = lag_text(project_dir, remote_commit, local.commit) if project_dir else ""
+    lag = lag_text(project_dir, remote_commit, local.commit, paths) if project_dir else ""
     return NodeStatus(name, ip, "stale", short, lag=lag,
                       note=f"ветка {man.get('branch','?')} @ {short}")
 
 
 async def check_status(ssh: SshClient, nodes: list, remote_folder: str,
-                       local: LocalVersion, project_dir: str | None = None) -> list[NodeStatus]:
+                       local: LocalVersion, project_dir: str | None = None,
+                       paths: "list[str] | None" = None) -> list[NodeStatus]:
     """Параллельно опросить ноды и сравнить с локальной версией. project_dir (git-репо проекта)
-    — чтобы посчитать отставание в коммитах («отстаёт на N»); без него счётчик пуст."""
+    — чтобы посчитать отставание в коммитах («отстаёт на N»); без него счётчик пуст.
+    paths — считать отставание только по этим каталогам (код компонента в общем репо)."""
     results = await asyncio.gather(
-        *[_one(ssh, n, remote_folder, local, project_dir) for n in nodes])
+        *[_one(ssh, n, remote_folder, local, project_dir, paths) for n in nodes])
     return list(results)
 
 
@@ -57,9 +59,9 @@ def print_status(local: LocalVersion, statuses: list[NodeStatus]) -> None:
             "unreachable": "🔌", "dirty-local": "✅*"}
     print(f"\nЛокальная версия: {local.short} ({local.branch})"
           f"{'  ⚠️ DIRTY (незакоммичено)' if local.dirty else ''}")
-    print(f"{'НОДА':18} {'IP':16} {'СОСТОЯНИЕ':14} {'SHA ноды':11} {'ОТСТАВАНИЕ':18} ПРИМЕЧАНИЕ")
-    print("-" * 104)
+    print(f"{'НОДА':18} {'IP':16} {'СОСТОЯНИЕ':14} {'SHA ноды':11} {'ОТСТАВАНИЕ':26} ПРИМЕЧАНИЕ")
+    print("-" * 112)
     for s in statuses:
         lag = "" if s.lag in ("", "up-to-date") else s.lag
         print(f"{s.node:18} {s.ip:16} {icon.get(s.state,'?')} {s.state:11} "
-              f"{s.remote_short:11} {lag:18} {s.note}")
+              f"{s.remote_short:11} {lag:26} {s.note}")

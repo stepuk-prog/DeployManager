@@ -504,7 +504,11 @@ async def run_infra(db: Database, ssh: SshClient, *, component: str | None = Non
     print(f"   версия: v{local.short} ({local.branch}){'  ⚠️ DIRTY' if local.dirty else ''}")
 
     # сверка версий на нодах (VERSION vs git) — programdata не нужна
-    statuses = await status.check_status(ssh, targets, comp.remote_folder, local, project_dir)
+    # Отставание — по коду компонента (+ common), а не по всему репо Dispatcher2.0:
+    # иначе коммиты GD/тестов/доков записываются в «отставание» WD.
+    lag_paths = [project_dir] + ([common_dir] if comp.needs_common else [])
+    statuses = await status.check_status(ssh, targets, comp.remote_folder, local, project_dir,
+                                         paths=lag_paths)
     status.print_status(local, statuses)
     if operation == "check":
         # read-only сверка → но если есть отставшие (stale) / отсутствующие (missing) —
