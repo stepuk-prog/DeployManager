@@ -103,6 +103,8 @@ _PGBOUNCER_RECOVERABLE = (
 
 # Таймаут ожидания свободного соединения из пула (правило: не зависать).
 _ACQUIRE_TIMEOUT = 30
+# Штатное закрытие пула на остановке (close ждёт возврата соединений); дольше — terminate (0.8.1).
+POOL_CLOSE_TIMEOUT = 5.0
 
 # Тексты логов. Дефолт — русский (11 программ из 12); английские форки передают свои
 # через configure(messages=...). Ключи стабильны, менять их — ломать переопределения.
@@ -117,6 +119,8 @@ MESSAGES = {
     'bad_fetch_mode': "Некорректный fetch_mode: {fetch_mode}",
     'unexpected_sql': "Непредвиденная SQL-ошибка в {func} (пул '{db}'): {msg}",
     'connection_dropped': "Соединение пула '{db}' разорвано в {func} ({attempt}/{retries}): {error}",
+    'query_timeout': "{func}: запрос к '{db}' не уложился в срок (ожидание соединения или сам запрос) — "
+                     "не повторяю",
     'recreate_after_retries': "{func}: пересоздаю пул '{db}'",
     'recreate_failed': "Не удалось пересоздать пул '{db}': {error}",
     'restore_failed': "Не удалось восстановить соединение пула '{db}' после всех попыток",
@@ -225,10 +229,13 @@ class BaseDatabase:
     async def close(self):
         for name, pool in list(self._pools.items()):
             if pool is not None:
+                # Штатное закрытие, но не дольше POOL_CLOSE_TIMEOUT: зависший запрос не должен держать
+                # остановку (SIGTERM → TimeoutStopSec); не успел — обрываем (0.8.1, п.1.5).
                 try:
-                    await pool.close()
+                    await asyncio.wait_for(pool.close(), timeout=POOL_CLOSE_TIMEOUT)
                     _logger.info(_msg('pool_closed', name=name))
                 except (Exception,) as error:
+                    pool.terminate()
                     _logger.warning(_msg('pool_close_error', name=name, error=error))
                 self._pools[name] = None
 
@@ -257,9 +264,11 @@ class BaseDatabase:
                         return
                 except (Exception,):
                     pass
+            # terminate, а не close: close() ждёт возврата ВСЕХ соединений, а пул уже признан нерабочим —
+            # под этим замком стояли бы все запросы к пулу (0.8.1; проверка BinoAlpha 29-09, п.1.5).
             try:
                 if pool is not None:
-                    await pool.close()
+                    pool.terminate()
             except (Exception,):
                 pass
             self._pools[name] = None
@@ -339,12 +348,14 @@ class BaseDatabase:
         Задержка между попытками — экспонента с джиттером: delay*2^(n-1) + до 40% сверху."""
         for attempt in range(1, retries + 1):
             recoverable_err = None
+            querying = False        # пул поднят, дальше — ожидание соединения и сам запрос
             try:
                 await self._ensure_pool(db)
                 pool = self._pools.get(db)
                 if pool is None:
                     _logger.error(_msg('pool_missing', db=db, func=func))
                     return False
+                querying = True
                 async with pool.acquire(timeout=_ACQUIRE_TIMEOUT) as conn:
                     if fetch_mode == "row":
                         res = await conn.fetchrow(sql, *args)
@@ -361,9 +372,19 @@ class BaseDatabase:
                         return False
                     self._recovery_error_logged.discard(db)
                     return res
+            except (TimeoutError, asyncio.TimeoutError) as error:
+                # До кортежа ниже: TimeoutError — подкласс OSError. Таймаут ПОДЪЁМА пула — как обрыв
+                # (повтор, пересоздание). Таймаут ожидания соединения (_ACQUIRE_TIMEOUT) или самого
+                # запроса (command_timeout) — отказ сразу: повтор выполнил бы тот же медленный запрос
+                # ещё раз (нагрузка ×retries, двойное применение у процедур с записью), а занятый пул
+                # не сломан — пересоздание оборвало бы чужие запросы (0.8.1; проверка BinoAlpha 29-09, п.1.4).
+                if querying:
+                    _logger.warning(_msg('query_timeout', func=func, db=db))
+                    return False
+                recoverable_err = error
             except (InterfaceError, CannotConnectNowError, ConnectionDoesNotExistError,
                     ReadOnlySQLTransactionError,
-                    ConnectionError, OSError, TimeoutError, asyncio.TimeoutError) as error:
+                    ConnectionError, OSError) as error:
                 # ConnectionError/OSError ловят встроенный ConnectionError('unexpected
                 # connection_lost() call') из asyncpg — без них он провалился бы в общий
                 # except и вернул False без восстановления.
