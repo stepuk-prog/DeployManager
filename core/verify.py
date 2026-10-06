@@ -23,6 +23,11 @@ def _rsync_excluded(rel: str, excludes: list[str]) -> bool:
     """Попадает ли путь под правило исключения rsync (та же семантика, что у `--exclude`)."""
     parts = rel.split("/")
     for pat in excludes:
+        if pat.startswith("/"):                         # rsync: ведущий / — якорь к корню переноса
+            pat = pat[1:]                               # (/scripts — только каталог в корне проекта)
+            if rel == pat or rel.startswith(pat + "/") or fnmatch.fnmatch(rel, pat):
+                return True
+            continue
         if "/" in pat:                                  # anchored: путь от корня переноса
             if fnmatch.fnmatch(rel, pat):               # logs/* → logs/__init__.py, logs/sub/x.py
                 return True
@@ -50,13 +55,14 @@ def deployed_files(project_dir: str) -> list[str]:
     tracked = _git_ls()
     untracked = _git_ls("--others", "--exclude-standard")
     includes = set(config.RSYNC_INCLUDES)          # вернулись через --include, несмотря на exclude
+    excludes = config.RSYNC_EXCLUDES + config.project_excludes(project_dir)
     files = []
     for f in (tracked.splitlines() + untracked.splitlines()):
         f = f.strip()
-        if not f or (_rsync_excluded(f, config.RSYNC_EXCLUDES) and f not in includes):
+        if not f or (_rsync_excluded(f, excludes) and f not in includes):
             continue
         files.append(f)
-    if os.path.isfile(os.path.join(project_dir, ".env")) and not _rsync_excluded(".env", config.RSYNC_EXCLUDES):
+    if os.path.isfile(os.path.join(project_dir, ".env")) and not _rsync_excluded(".env", excludes):
         files.append(".env")
     return sorted(set(files))
 

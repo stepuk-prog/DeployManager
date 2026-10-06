@@ -72,7 +72,7 @@ class Deployer:
         cmd += ["-e", self._ssh_cmd]
         for inc in config.RSYNC_INCLUDES:       # include ПЕРЕД exclude (первое правило выигрывает)
             cmd.append(f"--include={inc}")
-        for ex in config.RSYNC_EXCLUDES:
+        for ex in config.RSYNC_EXCLUDES + config.project_excludes(project_dir):
             cmd.append(f"--exclude={ex}")
         for ex in (extra_excludes or []):
             cmd.append(f"--exclude={ex}")

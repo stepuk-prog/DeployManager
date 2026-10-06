@@ -70,10 +70,11 @@ def _stale_files(remote_files: list[str], project_dir: str) -> list[str]:
     иначе .claude и прочее «вне git», но реально лежащее в проекте, ложно считалось бы лишним.
     Минус rsync-исключения, VERSION и *.log."""
     out = []
+    excludes = config.RSYNC_EXCLUDES + config.project_excludes(project_dir)
     for f in remote_files:
         if f == config.VERSION_FILE or f.endswith(".log"):
             continue
-        if _rsync_excluded(f, config.RSYNC_EXCLUDES):
+        if _rsync_excluded(f, excludes):
             continue
         if os.path.exists(os.path.join(project_dir, f)):
             continue                       # файл есть в оригинале → не лишний

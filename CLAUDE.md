@@ -57,6 +57,10 @@ GitHub: `git@github.com-stepuk:stepuk-prog/DeployManager.git` (alias `github.com
 ## SSH / деплой
 - Вход под **vova** (rsync кода/venv/playwright — правильный владелец). У vova **нет passwordless sudo** на части нод → привилегии (юниты в /etc, systemctl) под **root** (`PRIV_USER=root`, тот же ключ). `ssh.run_priv`.
 - rsync **исключает**: `.git .venv venv *.log *.session files/* __pycache__ *.pyc .idea pictures/new *.md .env.example .claude .directory .vscode`. **`.env` ДЕПЛОИТСЯ** (не исключён).
+- **Исключения проекта — `.deployignore`** в его корне (паттерн rsync на строку, `#` — комментарий; ведущий `/` — от корня
+  проекта): то, что нельзя в общий RSYNC_EXCLUDES, потому что он матчит ВСЕ проекты (`scripts` у Dispatcher2.0/Clusters —
+  рабочий). `config.project_excludes()` применяется везде, где общий список: rsync, хэш-сверка (`deployed_files`),
+  поиск лишних файлов (`_stale_files`). Первый — VoiceAssistant (`/scripts`, `/tests`), 06-10-2026.
 - provision = venv → pip install -r → playwright install (если есть в requirements; предлагается).
 - `VERSION` — манифест (git SHA) на ноде; по нему статус «up-to-date/stale».
 

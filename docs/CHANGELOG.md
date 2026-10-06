@@ -2,6 +2,18 @@
 
 Все значимые изменения DeployManager. Формат — по разделам Added / Changed / Fixed.
 
+## 2026-10-06
+
+### Added
+- **Исключения проекта — файл `.deployignore`** в корне проекта: паттерны rsync, по одному на строку
+  (`#` — комментарий, ведущий `/` якорит к корню проекта). Нужен для того, что нельзя положить в общий
+  `RSYNC_EXCLUDES`: паттерн там матчит каталоги ВСЕХ проектов (`scripts` у Dispatcher2.0, Clusters и
+  квизов — рабочий). `config.project_excludes(project_dir)` применяется во всех трёх местах, где общий
+  список: выгрузка (`rsync_project`), хэш-сверка версий (`deployed_files`, иначе исключённое вечно
+  числилось бы «не доехавшим») и поиск лишних файлов (`_stale_files`). `_rsync_excluded` понимает
+  ведущий `/`, как rsync. Первый пользователь — VoiceAssistant (`/scripts`, `/tests` — локальные
+  инструменты разработчика). Тесты: `test_deployignore_anchored_root_dirs`, `test_deployignore_absent`.
+
 ## 2026-09-23
 
 ### Added

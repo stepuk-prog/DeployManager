@@ -35,3 +35,20 @@ def test_production_assets_kept():
                 "pictures/end_week.png", "pictures/seria_plus.png", "pictures/bug.png",
                 "apps/app.py", "messages/message.py"):
         assert not _rsync_excluded(rel, config.RSYNC_EXCLUDES), rel
+
+
+# ── исключения проекта (.deployignore, 06-10-2026) ─────────────────────────────────────────
+def test_deployignore_anchored_root_dirs(tmp_path):
+    """`/scripts` и `/tests` из .deployignore режут только каталоги в КОРНЕ проекта, а не
+    одноимённые вложенные (у Dispatcher2.0/Clusters `scripts` — рабочий каталог)."""
+    (tmp_path / ".deployignore").write_text("# локальные инструменты\n/scripts\n\n/tests\n", encoding="utf-8")
+    excludes = config.project_excludes(str(tmp_path))
+    assert excludes == ["/scripts", "/tests"]
+    for rel in ("scripts/channel_corpus.py", "scripts/__pycache__/x.pyc", "tests/test_intent.py", "scripts"):
+        assert _rsync_excluded(rel, excludes), rel
+    for rel in ("apps/scripts/run.py", "database/voice_assistant.sql", "main.py", "testsuite/x.py"):
+        assert not _rsync_excluded(rel, excludes), rel
+
+
+def test_deployignore_absent(tmp_path):
+    assert config.project_excludes(str(tmp_path)) == []

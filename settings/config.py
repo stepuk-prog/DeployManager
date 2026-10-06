@@ -101,6 +101,24 @@ RSYNC_EXCLUDES = [
 # Что вернуть обратно, даже если попало под exclude (структурный маркер рантайм-папки files/).
 # --include идут ПЕРЕД --exclude (rsync: первое совпавшее правило выигрывает).
 RSYNC_INCLUDES = ["files/.gitkeep"]
+
+# Исключения ПРОЕКТА — файл `.deployignore` в его корне: паттерн rsync на строку, `#` — комментарий.
+# Нужен для того, что не годится в общий RSYNC_EXCLUDES: паттерн там матчит ВСЕ проекты (см. NB про
+# `scripts` выше — у Dispatcher2.0/Clusters/квизов это рабочие каталоги). Ведущий `/` якорит к корню
+# проекта: `/scripts` режет только каталог в корне. Первым завёл VoiceAssistant (06-10-2026):
+# scripts/ и tests/ — локальные инструменты разработчика, на ноде не нужны.
+DEPLOYIGNORE_FILE = ".deployignore"
+
+
+def project_excludes(project_dir: str) -> list[str]:
+    """Паттерны из `.deployignore` проекта (нет файла — пусто). Применяются везде, где общий
+    RSYNC_EXCLUDES: выгрузка, хэш-сверка версий, поиск лишних файлов — иначе исключённое
+    вечно числилось бы «не доехавшим» до ноды."""
+    path = Path(project_dir) / DEPLOYIGNORE_FILE
+    if not path.is_file():
+        return []
+    lines = (line.strip() for line in path.read_text(encoding="utf-8").splitlines())
+    return [line for line in lines if line and not line.startswith("#")]
 RSYNC_DELETE = os.getenv("RSYNC_DELETE", "0").strip().lower() in ("1", "true", "yes", "on")
 
 # Имя файла-манифеста версии на сервере (git SHA + метаданные деплоя).
