@@ -10,6 +10,7 @@ from datetime import datetime
 
 from classes import Deployer, SshClient
 from classes.manifest import build_manifest, local_version, parse_manifest
+from core import gitpush
 from core import audit as audit_mod
 from core import deploy as deploy_mod
 from core import provision as provision_mod
@@ -26,7 +27,8 @@ _ACTION_MAP = {"new": "1", "add": "2", "check": "3", "dashboard": "3", "status":
                "create": "create", "state": "state", "manage": "manage", "uninstall": "uninstall",
                "sync": "sync", "env": "sync", "infra": "infra", "sessions": "sessions",
                "cookies": "cookies", "setup-node": "setup-node", "node": "setup-node",
-               "reporter": "reporter", "pgbackrest": "pgbackrest"}
+               "reporter": "reporter", "pgbackrest": "pgbackrest",
+               "gitpush": "gitpush", "push": "gitpush"}
 
 
 async def _ask(prompt: str, default: str = "") -> str:
@@ -436,6 +438,10 @@ async def _deploy_flow(db: Database, ssh: SshClient, project_dir: str, local,
                        remote_folder: str, local_svcs: list, records: list, nodes: list,
                        linked_ips: set, preselect: str | None, dry_run: bool, add_server: bool) -> None:
     """Общий pipeline деплоя для веток «с нуля» и «добавить сервер»."""
+    # выкатываемый коммит должен быть на GitHub — иначе VERSION на нодах ссылается в пустоту
+    if not dry_run and not await gitpush.ensure_pushed(project_dir):
+        print("🛑 Деплой отменён (git push).")
+        return
     # Каждый service-файл — отдельная программа (своя запись programdata): уточняем, с какими работаем.
     local_svcs, records = await select_services(local_svcs, records)
     if not local_svcs:
@@ -558,6 +564,7 @@ async def run(args=None):
             "  [6] юзерботы (сессии): флот (БД Program) и персонажи форума (БД forum)\n"
             "  [7] cookies (OTC/Screen/TV/Binodex) — GUI-only, видимый браузер\n"
             "  [8] настроить новую ноду (bootstrap → тип → регистрация → Watchdog)\n"
+            "  [9] git push проектов (обзор репозиториев PROJECTS_DIR, push выбранных)\n"
             "  [q] выход\nВыбор", "1")
         if action == "4":
             action = "sync"
@@ -569,6 +576,8 @@ async def run(args=None):
             action = "cookies"
         if action == "8":
             action = "setup-node"
+        if action == "9":
+            action = "gitpush"
         if action == "q":
             return
         if action == "setup-node":   # turnkey ввод новой ноды — SSH+БД, папка проекта не нужна
@@ -662,7 +671,8 @@ async def run(args=None):
                 names = ", ".join(f"{s['name']}({s['lag']})" for s in stale)
                 if await ui.confirm(
                         f"Обнаружен рассинхрон версий на {len(stale)} нод(ах): {names}.\n"
-                        f"Синхронизировать их до локальной {local.short}?", danger=True):
+                        f"Синхронизировать их до локальной {local.short}?", danger=True) \
+                        and (dry_run or await gitpush.ensure_pushed(project_dir)):
                     from core import update
                     await update.update(ssh, db, project_dir, remote_folder, local_svcs,
                                         records, local, nodes, stale, dry_run=dry_run)

@@ -36,6 +36,7 @@ from datetime import datetime
 
 from classes.deployer import Deployer
 from classes.manifest import build_manifest, local_version
+from core import gitpush
 from classes.ssh_client import SshClient
 from core import status, ui
 from core.deploy import DeployResult, print_deploy_results
@@ -525,6 +526,9 @@ async def run_infra(db: Database, ssh: SshClient, *, component: str | None = Non
                 + ", ".join(_node_name(n) for n in outdated), danger=True):
             print("Отменено.")
             return
+        if not await gitpush.ensure_pushed(project_dir):
+            print("Отменено (git push).")
+            return
         await _apply_to_nodes(ssh, comp, project_dir, common_dir, outdated, local,
                               rsync_code=True, write_env=False, dry_run=False)
         return
@@ -557,6 +561,9 @@ async def run_infra(db: Database, ssh: SshClient, *, component: str | None = Non
                 f"{_verb} {comp.label} на {len(targets)} нод(ы){note}?\n"
                 f"   {_OP_DETAILS[operation]}", danger=True):
             print("Отменено.")
+            return
+        if rsync_code and not await gitpush.ensure_pushed(project_dir):
+            print("Отменено (git push).")
             return
 
     await _apply_to_nodes(ssh, comp, project_dir, common_dir, targets, local,

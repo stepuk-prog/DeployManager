@@ -32,6 +32,14 @@ TOOLS = [
         "module": "tools.cookies.gui.app",
         "builder": "build_screen",
     },
+    {
+        "key": "gitpush",
+        "kind": "flow",
+        "label": "Git push проектов",
+        "icon": "📤",
+        "color": "INDIGO_600",
+        "module": "tools.gitpush",
+    },
 ]
 
 # Множество action-ключей суб-инструментов — для гардов в cli/gui (не требуют проекта).

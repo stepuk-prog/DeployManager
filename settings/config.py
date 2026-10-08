@@ -170,6 +170,14 @@ PGBACKREST_LOCAL_DIR = str(Path(
 ).expanduser())
 PGBACKREST_REPO = os.getenv("PGBACKREST_REPO", "/home/vova/pgbackrest")
 
+# ----- Git push проектов (инструмент «Git push» + гейт деплоя) -----
+# ssh-алиас GitHub из ~/.ssh/config для https-remote'ов: https://github.com/<owner>/<repo> →
+# git@<алиас>:<owner>/<repo>.git (пуш из терминала без логина). Пусто — https не трогаем.
+GIT_SSH_HOST_ALIAS = os.getenv("GIT_SSH_HOST_ALIAS", "github.com-stepuk")
+# Каталоги, в которые обзор репозиториев не заходит (имена, через запятую).
+GIT_SKIP_DIRS = tuple(d.strip() for d in os.getenv(
+    "GIT_SKIP_DIRS", "_archive,venv,.venv,node_modules,__pycache__,.idea,.git").split(",") if d.strip())
+
 # ----- Настройка новой ноды («Настроить ноду») -----
 # Порты, которые кластер открывает клиент-узлу (haproxy_client → лидер): entrypoint
 # 6442, leader-pgbouncer 6543, Patroni health 8008 (+ 22 SSH). НЕ etcd/5432 — клиенту
