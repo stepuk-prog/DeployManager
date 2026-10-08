@@ -95,8 +95,8 @@ async def main(page: ft.Page):
             set_busy(False)
             sink.write("— готово —\n")
 
-    def branch(label: str, action: str, **kw) -> ft.Control:
-        btn = ft.Button(content=ft.Text(label),
+    def branch(label: str, action: str, text_color=None, **kw) -> ft.Control:
+        btn = ft.Button(content=ft.Text(label, color=text_color),
                         on_click=lambda e, a=action: page.run_task(run_branch, a), **kw)
         branch_buttons.append(btn)
         return btn
@@ -212,7 +212,9 @@ async def main(page: ft.Page):
             branch("🔍 Проверить версии", "check"),
             branch("🎛️ Управление", "manage"),
             branch("♻️ Обновить .env/юниты", "sync"),
-            branch("🗑️ Деинсталляция", "uninstall"),
+            # деструктивная ветка — красная, чтобы не промахнуться мимо соседних
+            branch("🗑️ Деинсталляция", "uninstall", text_color=ft.Colors.WHITE,
+                   bgcolor=ft.Colors.RED_700),
             branch("📤 Push", "push-project"),
         ], wrap=True),
         ft.Row([ft.Text("Control-plane (без выбора проекта):", italic=True,
