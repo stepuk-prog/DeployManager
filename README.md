@@ -40,7 +40,12 @@ cd DeployManager
 python3.11 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 cp .env.example .env   # заполнить PG_* и SSH_*
+bin/install-desktop.sh --desktop   # ярлык в меню (+ на рабочем столе) с иконкой icon.png
 ```
+
+Ярлык пишется с путями той папки, куда склонирован проект, — после `git clone` в любое место
+достаточно запустить `bin/install-desktop.sh`. В ярлыке `StartupWMClass=com.appveyor.flet` (app_id
+окна Flet на Wayland): без него Plasma показывает окно отдельной кнопкой с иконкой по умолчанию.
 
 `.env`: креды БД `Program` (через PgBouncer) и SSH (`SSH_USER=vova`, `SSH_KEY` —
 приватный ключ для входа на ноды; `PRIV_USER`/`PRIV_KEY` — привилегированный вход,
@@ -54,7 +59,8 @@ cp .env.example .env   # заполнить PG_* и SSH_*
 ## Запуск
 
 ```bash
-.venv/bin/python main.py
+.venv/bin/python main.py   # CLI
+bin/run.sh                 # GUI (Flet) — его же запускает ярлык
 ```
 
 Интерактивно: папка проекта → версия → валидация → выбор нод → подтверждение → деплой → статус.

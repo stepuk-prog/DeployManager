@@ -7,7 +7,7 @@
 GitHub: `git@github.com-stepuk:stepuk-prog/DeployManager.git` (alias `github.com-stepuk`).
 
 ## Запуск / тесты / окружение
-- GUI: `.venv/bin/python gui_main.py` (Flet). CLI: `.venv/bin/python main.py [--action …]`.
+- GUI: `.venv/bin/python gui_main.py` (Flet) или `bin/run.sh`; ярлык с иконкой — `bin/install-desktop.sh [--desktop]` (пути от клона, `StartupWMClass=com.appveyor.flet`). CLI: `.venv/bin/python main.py [--action …]`.
 - CLI-флаги: `--project PATH --action {new,add,check,create,state,manage,uninstall,sync,infra,sessions,cookies,gitpush} --command {start,stop,restart} --nodes all|... --dry-run --yes`. (`cookies` — GUI-only, из CLI печатает подсказку.)
 - Тесты: `PYTHONPATH=. .venv/bin/python -m pytest tests/ -q` (чистая логика, без БД/SSH).
 - `.env` (gitignored) — креды БД Program + SSH. Ключи: `PG_*`, `SSH_USER=vova`, `SSH_KEY=/home/vlad/.ssh/id_vlad_2026`, `PRIV_USER=root`, `PROJECTS_DIR`, `DISPATCHER_DIR` (корень Dispatcher2.0 для деплоя control-plane; дефолт `PROJECTS_DIR/Dispatcher2.0`), пер-компонентные исходники `GD_DIR`/`WD_DIR`/`CD_DIR`/`DISPATCHERCTL_DIR`/`COMMON_DIR` (дефолт — подпапки `DISPATCHER_DIR`; env-оверрайд для любой раскладки — `InfraComponent.source_dir`/`_common_dir()`), `REPORTER_DIR`/`CLUSTER_CONFIG_DIR` (дефолт в Clusters), `RSYNC_DELETE`, `PLAYWRIGHT_BROWSER`, `PROVISION`, `TELEGRAM_APPS` (суб-инструмент сессий; дефолт `my_gram,telegram_apps`), `PG_DB_BINODEX`/`TG_TOKEN`/`TG_CHANNEL`/`OTC_HEADLESS`/`BINODEX_HEADLESS`/`BINODEX_VW`/`BINODEX_VH` (суб-инструмент cookies), `PG_DB_FORUM`/`PERSON_TG_EXEC`/`PERSON_TG_WORKDIR` (группа «персонажи форума» в сессиях; дефолты `forum`, `/home/vlad/telegram_person/Telegram/Telegram`, `/home/vlad/TelegramsPerson`).
