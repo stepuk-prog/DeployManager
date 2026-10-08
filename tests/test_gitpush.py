@@ -39,8 +39,10 @@ def pair(tmp_path):
 
 
 @pytest.fixture(autouse=True)
-def _noninteractive():
+def _noninteractive(monkeypatch):
     ui.set_mode(interactive=False, assume_yes=True)
+    # push_repo пишет в audit — в тестах не засоряем боевой logs/deploy_audit.log
+    monkeypatch.setattr(gitpush.audit, "write", lambda record: None)
     yield
     ui.set_mode(interactive=True)
 
