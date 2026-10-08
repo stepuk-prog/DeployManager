@@ -44,7 +44,7 @@ bin/install-desktop.sh --desktop   # ярлык в меню (+ на рабоче
 ```
 
 Ярлык пишется с путями той папки, куда склонирован проект, — после `git clone` в любое место
-достаточно запустить `bin/install-desktop.sh`. В ярлыке `StartupWMClass=com.appveyor.flet` (app_id
+достаточно запустить `bin/install-desktop.sh`. В ярлыке `StartupWMClass=flet` (app_id
 окна Flet на Wayland): без него Plasma показывает окно отдельной кнопкой с иконкой по умолчанию.
 
 `.env`: креды БД `Program` (через PgBouncer) и SSH (`SSH_USER=vova`, `SSH_KEY` —

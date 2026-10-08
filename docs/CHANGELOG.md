@@ -21,7 +21,7 @@
 - **Иконка и переносимый ярлык.** Новый `icon.png` (512×512, круг с прозрачными углами). `bin/run.sh` берёт
   пути от своего расположения (раньше — жёсткий `/home/vlad/...`). Шаблон `bin/DeployManager.desktop` с
   абсолютными путями заменён генератором `bin/install-desktop.sh [--desktop]`: пишет ярлык в меню (и на
-  рабочий стол) с путями текущего клона и `StartupWMClass=com.appveyor.flet` — app_id окна Flet-клиента на
+  рабочий стол) с путями текущего клона и `StartupWMClass=flet` — app_id окна Flet-клиента на
   Wayland; без него Plasma показывала окно отдельной кнопкой панели с иконкой по умолчанию.
 - Конфиг: `GIT_SSH_HOST_ALIAS` (по умолч. `github.com-stepuk`), `GIT_SKIP_DIRS`. Тесты `tests/test_gitpush.py`
   (11: состояние, no-upstream, секреты, fast-forward, отказ при расхождении, гейт).

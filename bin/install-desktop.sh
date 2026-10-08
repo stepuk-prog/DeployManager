@@ -4,7 +4,7 @@
 #   bin/install-desktop.sh            # меню приложений
 #   bin/install-desktop.sh --desktop  # + ярлык на рабочем столе
 #
-# StartupWMClass=com.appveyor.flet — app_id окна Flet-клиента на Wayland. Без него Plasma не
+# StartupWMClass=flet — app_id окна Flet-клиента на Wayland. Без него Plasma не
 # связывает окно с закреплённым значком и показывает в панели отдельную кнопку с иконкой
 # по умолчанию.
 set -euo pipefail
@@ -24,7 +24,7 @@ Path=$DIR
 Icon=$DIR/icon.png
 Terminal=false
 Categories=Development;
-StartupWMClass=com.appveyor.flet
+StartupWMClass=flet
 EOF
 chmod +x "$APPS/$NAME"
 echo "✅ меню: $APPS/$NAME"
