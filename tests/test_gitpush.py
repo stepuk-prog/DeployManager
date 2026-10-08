@@ -174,3 +174,21 @@ def test_push_does_not_block_event_loop(pair, monkeypatch):
 
     ok, ticks = asyncio.run(scenario())
     assert ok and ticks >= 5      # за 0.5 с «сети» цикл крутился, а не стоял
+
+
+def test_push_project_clean_noop(pair):
+    work, origin = pair
+    before = _git(origin, "rev-parse", "master")
+    assert asyncio.run(gitpush.push_project(str(work)))
+    assert _git(origin, "rev-parse", "master") == before
+
+
+def test_push_project_pushes_from_subdir(pair):
+    work, origin = pair
+    _commit(work, "comp/m.py", "m = 1\n")             # папка проекта = подкаталог репо
+    assert asyncio.run(gitpush.push_project(str(work / "comp")))
+    assert _git(origin, "rev-parse", "master") == _git(work, "rev-parse", "HEAD")
+
+
+def test_push_project_not_git(tmp_path):
+    assert not asyncio.run(gitpush.push_project(str(tmp_path)))

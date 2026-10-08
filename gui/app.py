@@ -213,6 +213,7 @@ async def main(page: ft.Page):
             branch("🎛️ Управление", "manage"),
             branch("♻️ Обновить .env/юниты", "sync"),
             branch("🗑️ Деинсталляция", "uninstall"),
+            branch("📤 Push", "push-project"),
         ], wrap=True),
         ft.Row([ft.Text("Control-plane (без выбора проекта):", italic=True,
                         color=ft.Colors.INDIGO_300)]),

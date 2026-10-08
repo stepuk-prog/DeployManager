@@ -28,7 +28,7 @@ _ACTION_MAP = {"new": "1", "add": "2", "check": "3", "dashboard": "3", "status":
                "sync": "sync", "env": "sync", "infra": "infra", "sessions": "sessions",
                "cookies": "cookies", "setup-node": "setup-node", "node": "setup-node",
                "reporter": "reporter", "pgbackrest": "pgbackrest",
-               "gitpush": "gitpush", "push": "gitpush"}
+               "gitpush": "gitpush", "push": "gitpush", "push-project": "push-project"}
 
 
 async def _ask(prompt: str, default: str = "") -> str:
@@ -621,6 +621,9 @@ async def run(args=None):
         print(f"Проект: {project_dir}\nВерсия: {local.short} ({local.branch})"
               f"{'  ⚠️ DIRTY (незакоммичено)' if local.dirty else ''}"
               f"{'  [DRY-RUN]' if dry_run else ''}")
+        if action == "push-project":   # git push выбранного проекта (кнопка «📤 Push»)
+            await gitpush.push_project(project_dir)
+            return
         if action == "create":   # служебное: создать записи programdata для юнитов проекта
             from core.programdata import create_record_interactive
             local = validate_mod.list_local_services(project_dir)

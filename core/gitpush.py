@@ -269,6 +269,28 @@ async def ensure_pushed(project_dir: str) -> bool:
     return idx == 1
 
 
+async def push_project(project_dir: str) -> bool:
+    """Кнопка «📤 Push» проекта: запушить репозиторий выбранной папки (fast-forward, все проверки
+    push_repo). Папка может быть и подкаталогом репо (компонент Dispatcher2.0). True — на GitHub."""
+    ui.progress("git fetch…")
+    st = await asyncio.to_thread(repo_state, project_dir, True)
+    ui.progress("")
+    print(f"📤 {_describe(st)}")
+    if st.error:
+        print(f"🛑 Не git-репозиторий: {st.error}")
+        return False
+    if st.fetch_error:
+        print(f"   ⚠️ git fetch не прошёл ({st.fetch_error}) — сверяю с последним известным origin.")
+    if not st.remote_url:
+        print("🛑 Нет remote origin — пушить некуда.")
+        return False
+    if not st.ahead:
+        tail = f" (незакоммичено {st.dirty} — DM не коммитит)" if st.dirty else ""
+        print(f"✅ Пушить нечего — все коммиты уже на GitHub{tail}.")
+        return True
+    return await push_repo(st)
+
+
 async def run(db=None) -> None:
     """Инструмент «📤 Git push»: обзор репозиториев PROJECTS_DIR → push выбранных."""
     root = config.PROJECTS_DIR
@@ -317,4 +339,4 @@ async def run(db=None) -> None:
 
 
 __all__ = ["RepoState", "find_repos", "repo_state", "https_to_ssh", "scan_secrets",
-           "push_repo", "ensure_pushed", "run"]
+           "push_repo", "push_project", "ensure_pushed", "run"]
