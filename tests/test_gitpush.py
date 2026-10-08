@@ -141,3 +141,36 @@ def test_ensure_pushed_pushes_by_default(pair):
 
 def test_ensure_pushed_not_git(tmp_path):
     assert asyncio.run(gitpush.ensure_pushed(str(tmp_path)))
+
+
+def test_push_does_not_block_event_loop(pair, monkeypatch):
+    """Медленный git (сеть) не должен замораживать event loop — у Flet-GUI он один на всё окно."""
+    import time
+    work, _ = pair
+    _commit(work, "b.py", "y = 2\n")
+    st = gitpush.repo_state(str(work))
+    real = gitpush._git
+
+    def slow_git(cwd, *args, timeout=20):
+        if args and args[0] == "push":
+            time.sleep(0.5)
+        return real(cwd, *args, timeout=timeout)
+
+    monkeypatch.setattr(gitpush, "_git", slow_git)
+
+    async def scenario():
+        ticks = 0
+
+        async def ticker():
+            nonlocal ticks
+            while True:
+                await asyncio.sleep(0.05)
+                ticks += 1
+
+        t = asyncio.create_task(ticker())
+        ok = await gitpush.push_repo(st)
+        t.cancel()
+        return ok, ticks
+
+    ok, ticks = asyncio.run(scenario())
+    assert ok and ticks >= 5      # за 0.5 с «сети» цикл крутился, а не стоял

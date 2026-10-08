@@ -79,6 +79,12 @@ def _git(cwd: str, *args: str, timeout: int = 20) -> tuple[int, str, str]:
     return p.returncode, (p.stdout or "").strip(), (p.stderr or "").strip()
 
 
+async def _agit(cwd: str, *args: str, timeout: int = 20) -> tuple[int, str, str]:
+    """`_git` в отдельном потоке: git push/fetch идут по сети секундами, а у Flet-GUI один
+    event loop — синхронный subprocess в корутине замораживал окно («программа зависла»)."""
+    return await asyncio.to_thread(_git, cwd, *args, timeout=timeout)
+
+
 def find_repos(root: str, skip: tuple[str, ...] = config.GIT_SKIP_DIRS) -> list[str]:
     """Корни git-репозиториев под root (в найденный репо не спускаемся). Отсортировано."""
     found = []
@@ -204,13 +210,15 @@ async def push_repo(st: RepoState) -> bool:
         if ssh_url and await ui.confirm(
                 f"{name}: origin по https ({st.remote_url}) — из терминала без логина не пушится.\n"
                 f"Перевести на ssh: {ssh_url}?"):
-            rc, _o, err = _git(st.path, "remote", "set-url", "origin", ssh_url)
+            rc, _o, err = await _agit(st.path, "remote", "set-url", "origin", ssh_url)
             if rc != 0:
                 print(f"⚠️ {name}: set-url не прошёл: {err}")
                 return False
             print(f"   {name}: origin → {ssh_url}")
             st.remote_url = ssh_url
-    secrets = scan_secrets(st)
+    ui.progress(f"🔍 {name}: проверка коммитов на секреты…")
+    secrets = await asyncio.to_thread(scan_secrets, st)
+    ui.progress("")
     if secrets:
         lines = "\n   ".join(secrets[:12])
         if not await ui.confirm(f"⚠️ {name}: в коммитах на push похоже на секреты:\n   {lines}\n"
@@ -224,7 +232,10 @@ async def push_repo(st: RepoState) -> bool:
             print(f"   {name}: push отменён.")
             return False
         args = ["push", "-u", "origin", st.branch]
-    rc, out, err = _git(st.path, *args, timeout=_PUSH_TIMEOUT)
+    print(f"📤 {name}: git push ({st.ahead} коммит.)…")
+    ui.progress(f"📤 {name}: git push…")
+    rc, out, err = await _agit(st.path, *args, timeout=_PUSH_TIMEOUT)
+    ui.progress("")
     ok = rc == 0
     tail = (err or out).splitlines()
     print(f"{'✅' if ok else '❌'} {name}: " + (tail[-1] if tail else ("запушено" if ok else f"код {rc}")))
@@ -236,7 +247,9 @@ async def push_repo(st: RepoState) -> bool:
 
 async def ensure_pushed(project_dir: str) -> bool:
     """Гейт перед выкаткой кода: HEAD на GitHub? True — продолжать деплой, False — отмена."""
+    ui.progress("git fetch: выкатываемый коммит на GitHub?…")
     st = await asyncio.to_thread(repo_state, project_dir, True)
+    ui.progress("")
     if st.error or not st.remote_url or not st.branch:
         return True                      # не git / без origin / detached — гейт не применим
     if st.fetch_error:
@@ -266,12 +279,18 @@ async def run(db=None) -> None:
     print(f"📤 Git push: {len(repos)} репозиториев под {root} (без {', '.join(config.GIT_SKIP_DIRS)}), "
           f"git fetch…")
     sem = asyncio.Semaphore(_FETCH_PARALLEL)
+    done = 0
 
     async def one(path: str) -> RepoState:
+        nonlocal done
         async with sem:
-            return await asyncio.to_thread(repo_state, path, True)
+            st = await asyncio.to_thread(repo_state, path, True)
+        done += 1
+        ui.progress(f"git fetch: {done}/{len(repos)}…")
+        return st
 
     states = await asyncio.gather(*(one(p) for p in repos))
+    ui.progress("")
     todo = [s for s in states if s.needs_push]
     for s in states:
         if s.needs_push or s.behind or s.dirty or s.https or s.error or s.fetch_error:
@@ -289,7 +308,11 @@ async def run(db=None) -> None:
     if not picked:
         print("Ничего не выбрано.")
         return
-    results = [await push_repo(todo[i]) for i in picked]
+    results = []
+    for k, i in enumerate(picked, 1):
+        ui.progress(f"push {k}/{len(picked)}…")
+        results.append(await push_repo(todo[i]))
+    ui.progress("")
     print(f"Итог: запушено {sum(results)} из {len(results)}.")
 
 
