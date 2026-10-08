@@ -56,6 +56,25 @@ bin/install-desktop.sh --desktop   # ярлык в меню (+ на рабоче
 `~/.ssh/config` там нельзя — `IdentityFile` в нём привязан к Host-алиасам,
 а по IP они не матчатся.
 
+## Push с другого компьютера
+
+Remote'ы репозиториев — через ssh-алиас `github.com-stepuk` (`git@github.com-stepuk:stepuk-prog/<репо>.git`).
+На новой машине push заработает после одноразовой настройки: ключ GitHub-аккаунта в `~/.ssh/` (лучше
+новый — `ssh-keygen -t ed25519 -f ~/.ssh/id_stepuk` и `.pub` в GitHub → Settings → SSH keys) и блок в
+`~/.ssh/config`:
+
+```
+Host github.com-stepuk
+    HostName github.com
+    User git
+    IdentityFile ~/.ssh/id_stepuk
+    IdentitiesOnly yes
+```
+
+Проверка — `ssh -T git@github.com-stepuk`. Без настройки DM не пытается пушить вслепую, а пишет, чего
+не хватает. Если ключ GitHub на машине один, можно обойтись без алиаса: `GIT_SSH_HOST_ALIAS=github.com`
+в `.env`.
+
 ## Запуск
 
 ```bash

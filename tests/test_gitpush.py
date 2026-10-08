@@ -192,3 +192,34 @@ def test_push_project_pushes_from_subdir(pair):
 
 def test_push_project_not_git(tmp_path):
     assert not asyncio.run(gitpush.push_project(str(tmp_path)))
+
+
+def test_ssh_host_parsing():
+    assert gitpush.ssh_host("git@github.com-stepuk:o/r.git") == "github.com-stepuk"
+    assert gitpush.ssh_host("ssh://git@gh/o/r.git") == "gh"
+    assert gitpush.ssh_host("https://github.com/o/r.git") is None
+    assert gitpush.ssh_host("/srv/origin.git") is None
+
+
+def test_ssh_remote_problem(tmp_path, monkeypatch):
+    key = tmp_path / "key_ok"
+    key.write_text("x")
+    cfg = tmp_path / "ssh_config"
+    cfg.write_text(f"Host gh-ok\n  HostName github.com\n  IdentityFile {key}\n  IdentitiesOnly yes\n"
+                   f"Host gh-nokey\n  HostName github.com\n  IdentityFile {tmp_path}/missing\n"
+                   f"  IdentitiesOnly yes\n")
+    monkeypatch.setattr(gitpush, "_SSH_CMD", ["ssh", "-F", str(cfg)])
+    assert gitpush.ssh_remote_problem("git@gh-ok:o/r.git") is None
+    assert "файла нет" in gitpush.ssh_remote_problem("git@gh-nokey:o/r.git")
+    assert "его нет" in gitpush.ssh_remote_problem("git@gh-missing.invalid:o/r.git")
+    assert gitpush.ssh_remote_problem("https://github.com/o/r.git") is None
+
+
+def test_push_refused_without_ssh_alias(pair, monkeypatch):
+    work, origin = pair
+    _commit(work, "b.py", "y = 2\n")
+    st = gitpush.repo_state(str(work))
+    st.remote_url = "git@gh-missing.invalid:o/r.git"      # как после переноса на чужую машину
+    before = _git(origin, "rev-parse", "master")
+    assert not asyncio.run(gitpush.push_repo(st))
+    assert _git(origin, "rev-parse", "master") == before

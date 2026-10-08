@@ -18,6 +18,7 @@ import asyncio
 import getpass
 import os
 import re
+import socket
 import subprocess
 from dataclasses import dataclass
 
@@ -27,6 +28,7 @@ from settings import config
 _FETCH_PARALLEL = 8          # одновременных `git fetch` в обзоре
 _FETCH_TIMEOUT = 40          # сек на fetch одного репо
 _PUSH_TIMEOUT = 120          # сек на push
+_SSH_CMD = ["ssh"]           # тесты подменяют на ["ssh", "-F", <конфиг>]
 
 # Имена файлов, которым не место в GitHub (сравнение по пути внутри репо).
 _SECRET_NAME_RE = re.compile(
@@ -41,6 +43,7 @@ _SECRET_LINE_RES = (
     ("пароль/секрет литералом", re.compile(
         r"(?i)\b(password|passwd|pwd|secret|api_?key|token)\b\s*[=:]\s*['\"][^'\"\s]{6,}['\"]")),
 )
+_SSH_URL_RE = re.compile(r"^(?:ssh://)?(?:[^@/\s]+@)?([^:/\s]+)[:/]")   # git@HOST:o/r | ssh://git@HOST/o/r
 _HTTPS_GITHUB_RE = re.compile(r"^https://github\.com/([^/\s]+)/([^/\s]+?)(\.git)?/?$")
 
 
@@ -134,6 +137,62 @@ def https_to_ssh(url: str, alias: str = config.GIT_SSH_HOST_ALIAS) -> str | None
     return f"git@{alias}:{m.group(1)}/{m.group(2)}.git"
 
 
+def ssh_host(url: str) -> str | None:
+    """Хост ssh-remote'а (git@HOST:o/r.git, ssh://git@HOST/o/r) — алиас из ~/.ssh/config или имя;
+    для https/локального пути — None."""
+    if not url or url.startswith(("http://", "https://", "file://", "/", ".")):
+        return None
+    m = _SSH_URL_RE.match(url)
+    return m.group(1) if m else None
+
+
+def _ssh_setup_hint(alias: str) -> str:
+    return (f"   Настрой на этой машине (один раз):\n"
+            f"     1) ключ GitHub-аккаунта: скопируй приватный ключ в ~/.ssh/ (chmod 600) или создай новый\n"
+            f"        `ssh-keygen -t ed25519 -f ~/.ssh/id_stepuk` и добавь .pub в GitHub → Settings → SSH keys;\n"
+            f"     2) в ~/.ssh/config:\n"
+            f"          Host {alias}\n"
+            f"              HostName github.com\n"
+            f"              User git\n"
+            f"              IdentityFile ~/.ssh/id_stepuk\n"
+            f"              IdentitiesOnly yes\n"
+            f"     3) проверка: `ssh -T git@{alias}` → «Hi …!».\n"
+            f"   (Если ключ GitHub на машине один — можно GIT_SSH_HOST_ALIAS=github.com в .env DM.)")
+
+
+def ssh_remote_problem(url: str) -> str | None:
+    """Пройдёт ли ssh до remote'а с ЭТОЙ машины — по конфигурации ssh (`ssh -G`), без сети к GitHub.
+    None — ок или не ssh; иначе — понятное объяснение, что настроить. Ловит две поломки при переносе
+    DM на другой компьютер: нет Host-алиаса в ~/.ssh/config и нет файла ключа из него."""
+    host = ssh_host(url)
+    if not host:
+        return None
+    try:
+        p = subprocess.run([*_SSH_CMD, "-G", host], capture_output=True, text=True, timeout=10,
+                           stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return f"ssh недоступен ({e}) — push по {url} не пройдёт."
+    if p.returncode != 0:
+        return f"ssh -G {host}: {(p.stderr or '').strip()[:200]}"
+    cfg: dict[str, list[str]] = {}
+    for line in p.stdout.splitlines():
+        k, _, v = line.partition(" ")
+        cfg.setdefault(k.lower(), []).append(v.strip())
+    hostname = (cfg.get("hostname") or [host])[0]
+    if hostname == host:          # алиас не раскрылся — ssh пойдёт по имени как есть
+        try:
+            socket.getaddrinfo(host, 22)
+        except OSError:
+            return (f"remote {url}: хост «{host}» — это ssh-алиас, но в ~/.ssh/config этой машины его нет.\n"
+                    + _ssh_setup_hint(host))
+    if (cfg.get("identitiesonly") or ["no"])[0] == "yes":
+        keys = cfg.get("identityfile") or []
+        if keys and not any(os.path.isfile(os.path.expanduser(k)) for k in keys):
+            return (f"remote {url}: для «{host}» в ~/.ssh/config указан ключ {', '.join(keys)}, "
+                    f"но файла нет.\n" + _ssh_setup_hint(host))
+    return None
+
+
 def _push_range(st: RepoState) -> str:
     return f"{st.upstream}..HEAD" if st.upstream else "HEAD --not --remotes=origin"
 
@@ -217,6 +276,10 @@ async def push_repo(st: RepoState) -> bool:
             print(f"   {name}: origin → {ssh_url}")
             st.remote_url = ssh_url
     ui.progress(f"🔍 {name}: проверка коммитов на секреты…")
+    problem = await asyncio.to_thread(ssh_remote_problem, st.remote_url)
+    if problem:
+        print(f"🛑 {name}: {problem}")
+        return False
     secrets = await asyncio.to_thread(scan_secrets, st)
     ui.progress("")
     if secrets:
@@ -338,5 +401,6 @@ async def run(db=None) -> None:
     print(f"Итог: запушено {sum(results)} из {len(results)}.")
 
 
-__all__ = ["RepoState", "find_repos", "repo_state", "https_to_ssh", "scan_secrets",
+__all__ = ["RepoState", "find_repos", "repo_state", "https_to_ssh", "ssh_host", "ssh_remote_problem",
+           "scan_secrets",
            "push_repo", "push_project", "ensure_pushed", "run"]
