@@ -19,10 +19,10 @@ from PIL import Image
 _logger = logging.getLogger(__name__)
 _warn_template = 'Не загружена картинка оверлея {path}: {error}'
 
-_IMAGE_CACHE: dict = {}
+_IMAGE_CACHE: dict[tuple, Image.Image | None] = {}
 
 
-def configure(logger=None, warn_template: str = None) -> None:
+def configure(logger=None, warn_template: str | None = None) -> None:
     """Подключить логгер программы и, при необходимости, свой текст предупреждения.
 
     Зовётся один раз на старте — из `apps/app.py` программы, и ТОЛЬКО оттуда. Из
@@ -45,7 +45,7 @@ def clear_cache() -> None:
     _IMAGE_CACHE.clear()
 
 
-def load_rgba(path: str, size=None):
+def load_rgba(path: str, size=None) -> Image.Image | None:
     """PNG → Image(RGBA) с кэшем в памяти. None — файла нет/не читается (вызывающий
     решает, критично это или кадр просто соберётся без оверлея).
 

@@ -32,9 +32,10 @@ import imaplib
 import logging
 import re
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from email.header import decode_header, make_header
 from functools import partial
+from typing import Any
 
 # Отправители письма с кодом: Privy (no-reply@privy.io, no-reply@mail.privy.io) и сам binodex
 # (account@mail.binodex.io). Фильтр по домену, потому что адрес внутри домена они уже меняли.
@@ -50,20 +51,20 @@ SESSION_PROBE_JS = 'keys => keys.some(k => !!localStorage.getItem(k))'
 
 CODE_WAIT_SECONDS = 120
 CODE_POLL_EVERY = 3
-IMAP_OP_TIMEOUT = 30   # сек на одну IMAP-операцию в потоке (connect-таймаут покрывает лишь connect)
+IMAP_OP_TIMEOUT = 30   # сек на одну IMAP-операцию в потоке (connect-тайм-аут покрывает лишь connect)
 
 # КОНТРАКТ потока ожидания кода: внешний потолок = CODE_WAIT_SECONDS + CODE_STEP_SLACK, то есть
 # за дедлайн разрешено выйти ДВУМ операциям подряд. Не одной: `wait_for_code` намеренно
 # дочитывает письмо, чей uid нашёлся последним поиском, — а поиск сам мог стартовать за
-# мгновение до дедлайна и вернуться медленно, но УСПЕШНО (сокет-таймаут не сработал, ответ
+# мгновение до дедлайна и вернуться медленно, но УСПЕШНО (сокет-тайм-аут не сработал, ответ
 # пришёл). Тогда за окно выходят ОБЕ: поиск и чтение-развязка. Держат контракт три вещи —
-# укороченный сокет-таймаут реконнекта (три операции укладываются в одну, см. ниже), проверки
+# укороченный сокет-тайм-аут реконнекта (три операции укладываются в одну, см. ниже), проверки
 # дедлайна ВНУТРИ опроса (`wait_for_code` / `code_uids`) и запас CODE_STEP_SLACK.
 # Без проверок дедлайна опрос, начатый на 119-й секунде, успевал сделать noop + поиск НА
 # КАЖДОГО отправителя + чтение письма — четыре сокет-таймаута подряд, ~80с. Ломалось это ровно
 # так же, как обрыв до 0.6.3:
 # `wait_for` снимал ожидание, вход объявлялся неудачным (следующий круг просит новый одноразовый
-# код и двигает лимит binodex), а поток-сирота доживал на сокет-таймаутах и задерживал остановку
+# код и двигает лимит binodex), а поток-сирота доживал на сокет-тайм-аутах и задерживал остановку
 # процесса — `imap.*` паузы не спрашивает и про `stop_wait` не знает.
 # Оговорка: сокет-таймаут стоит на ЧТЕНИИ, а не на команде целиком, поэтому сервер, дробящий
 # ответ, растянуть её всё же может. Тот отказ, который мы видели (сокет открыт, ответа нет),
@@ -90,7 +91,7 @@ IMAP_SOCKET_TIMEOUT = 20
 # выбивал бы из контракта, обрыв на 119-й секунде тянул хвост до ~182с при тогдашнем потолке
 # 150, после чего `wait_for` снимал ожидание, вход объявлялся
 # неудачным (ровно то, от чего заводился реконнект), а поток-сирота ещё жил на своих сокет-
-# таймаутах. Треть общего потолка на операцию — и весь реконнект укладывается в него целиком.
+# тайм-аутах. Треть общего потолка на операцию — и весь реконнект укладывается в него целиком.
 IMAP_RECONNECT_SOCKET_TIMEOUT = IMAP_OP_TIMEOUT // 3
 # Во сколько времени заведомо укладывается реконнект: пауза перед ним плюс три операции под
 # потолком выше. Если до дедлайна осталось меньше — не начинаем вовсе: смысл реконнекта в том,
@@ -323,7 +324,7 @@ def extract_code(imap, uid: int, hint: str = MAIL_SUBJECT_HINT) -> str | None:
     for part in (msg.walk() if msg.is_multipart() else [msg]):
         if part.get_content_type() in ('text/plain', 'text/html'):
             body = part.get_payload(decode=True)
-            if not body:
+            if not body or not isinstance(body, bytes):   # decode=True: bytes или None
                 continue
             try:
                 txt = body.decode(part.get_content_charset() or 'utf-8', 'ignore')
@@ -335,9 +336,17 @@ def extract_code(imap, uid: int, hint: str = MAIL_SUBJECT_HINT) -> str | None:
     return None
 
 
+def _plain_sleep(seconds: float) -> bool:
+    """Пауза без прерывания — для wait_for_code без `stop_wait`. False = «не прервали»."""
+    time.sleep(seconds)
+    return False
+
+
 def wait_for_code(imap, baseline: set[int], froms: tuple[str, ...] = MAIL_FROM,
-                  hint: str = MAIL_SUBJECT_HINT, stop_wait=None,
-                  reconnect=None, logger=None) -> tuple[str, object]:
+                  hint: str = MAIL_SUBJECT_HINT,
+                  stop_wait: Callable[[float], bool] | None = None,
+                  reconnect: Callable[[], imaplib.IMAP4] | None = None,
+                  logger=None) -> tuple[str, object]:
     """Первое письмо с кодом ПОСЛЕ запроса (uid не из baseline) — старые коды игнорируем.
     Блокирующий поллинг IMAP до CODE_WAIT_SECONDS — звать через imap_thread.
 
@@ -363,7 +372,7 @@ def wait_for_code(imap, baseline: set[int], froms: tuple[str, ...] = MAIL_FROM,
     после чтения письма) — чтобы за окно выходили максимум ДВЕ операции подряд, как и обещает
     КОНТРАКТ у CODE_STEP_SLACK: поиск, успевший стартовать до дедлайна, и чтение письма, чей uid
     он нашёл."""
-    pause = stop_wait or (lambda seconds: bool(time.sleep(seconds)))
+    pause = stop_wait or _plain_sleep
     log = logger or _log
     deadline = time.monotonic() + CODE_WAIT_SECONDS
     reconnects = 0
@@ -438,11 +447,11 @@ def safe_logout(imap) -> None:
         pass
 
 
-async def imap_thread(fn, *args, timeout: float = IMAP_OP_TIMEOUT):
+async def imap_thread(fn: Callable[..., Any], *args, timeout: float = IMAP_OP_TIMEOUT):
     """IMAP-операция в потоке под жёстким потолком: зависший сервер в середине сессии не вешает
     async-флоу навсегда. asyncio.to_thread сам не отменяем, но await вернётся по таймауту →
     флоу не залипает, а поток-сирота доживает сам (см. про его соединение в inline_login)."""
-    return await asyncio.wait_for(asyncio.to_thread(fn, *args), timeout)
+    return await asyncio.wait_for(asyncio.to_thread(partial(fn, *args)), timeout)
 
 
 # ── шаги в браузере (page/context — утки, хелперы приходят от программы) ──────────────────────
@@ -629,7 +638,8 @@ def watch_session_refresh(page, on_rotated, *, hint: str = SESSION_REFRESH_HINT,
 
 def _report(logger, message: str) -> None:
     """Успех входа — в отчётный уровень программы, если он у неё есть (у семьи это `report`)."""
-    getattr(logger, 'report', logger.info)(message)
+    report: Callable[[str], object] = getattr(logger, 'report', logger.info)
+    report(message)
 
 
 # ── куки сессии ───────────────────────────────────────────────────────────────────────────────
@@ -647,7 +657,10 @@ def has_session(state: Mapping[str, object], keys=SESSION_KEYS) -> bool:
     # TypedDict именно с `Mapping[str, object]`, а неаннотированный `Mapping` — это
     # `Mapping[Any, Any]`, и на нём проверяющие типов (PyCharm) ругаются «Expected type
     # 'Mapping', got 'StorageState' instead» прямо на вызове (ForumTrade, otc_app:1331).
-    names = {item.get('name') for origin in (state or {}).get('origins', [])
+    origins = (state or {}).get('origins')
+    if not isinstance(origins, list):
+        return False
+    names = {item.get('name') for origin in origins if isinstance(origin, dict)
              for item in origin.get('localStorage', [])}
     return bool(names & set(keys))
 

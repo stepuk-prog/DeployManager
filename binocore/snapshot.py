@@ -215,6 +215,7 @@ def expiry_text(expiry_at: datetime, tz: str | None) -> str:
 
     :param expiry_at: конец опциона, ОБЯЗАТЕЛЬНО с поясом — наивное время тут означало бы гадание,
                       в каком поясе его считали
+    :param tz: пояс кадра (поле `tz` профиля) — разбирается `tz_of`, пусто = UTC
     :raises ValueError: наивное время или непригодный пояс
     """
     if expiry_at.tzinfo is None or expiry_at.utcoffset() is None:

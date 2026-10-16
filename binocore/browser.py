@@ -121,7 +121,7 @@ class BrowserSession:
     def page(self, role: str) -> Any:
         """Вкладка по роли. KeyError с внятным текстом вместо `pages_by_role['main']`:
         промах по роли означает, что init не довёл страницу до готовности."""
-        found = self.pages_by_role.get(role)
+        found: Any = self.pages_by_role.get(role)  # не Any|None: PyCharm его не сужает
         if found is None or found.is_closed():
             known = ', '.join(sorted(self.pages_by_role)) or 'ни одной'
             raise KeyError(f'Нет живой вкладки с ролью {role!r} (известные роли: {known})')
@@ -132,7 +132,7 @@ class BrowserSession:
         (проверка оформления чарта, health-чек, аварийный reload). Отличие от прямого
         `pages_by_role.get(role)`, который там стоял раньше: закрытая вкладка тоже даёт None.
         Иначе best-effort ветка получала мёртвую Page и падала уже внутри действия над ней."""
-        found = self.pages_by_role.get(role)
+        found: Any = self.pages_by_role.get(role)
         return None if found is None or found.is_closed() else found
 
     def add_cleanup(self, action: Callable) -> None:
@@ -176,7 +176,7 @@ class BrowserSession:
 
     @staticmethod
     async def _guarded(name: str, awaitable, timeout: float) -> None:
-        """Один шаг уборки: под таймаутом и без права уронить остальные."""
+        """Один шаг уборки: под тайм-аутом и без права уронить остальные."""
         try:
             await asyncio.wait_for(awaitable, timeout=timeout)
         except asyncio.TimeoutError:

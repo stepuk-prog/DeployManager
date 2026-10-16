@@ -101,7 +101,7 @@ _PGBOUNCER_RECOVERABLE = (
     "только чтение",
 )
 
-# Таймаут ожидания свободного соединения из пула (правило: не зависать).
+# Тайм-аут ожидания свободного соединения из пула (правило: не зависать).
 _ACQUIRE_TIMEOUT = 30
 # Штатное закрытие пула на остановке (close ждёт возврата соединений); дольше — terminate (0.8.1).
 POOL_CLOSE_TIMEOUT = 5.0
@@ -127,7 +127,7 @@ MESSAGES = {
 }
 
 
-def configure(logger=None, messages: dict = None) -> None:
+def configure(logger=None, messages: dict | None = None) -> None:
     """Подключить логгер программы и, при необходимости, свои тексты сообщений.
 
     Зовётся один раз при импорте `database/database.py` программы — там логгер уже создан,
@@ -180,7 +180,7 @@ class BaseDatabase:
                     **self._dsn, database=db_name,
                     min_size=self.min_size, max_size=self.max_size,
                     statement_cache_size=0,   # обязательно для PgBouncer transaction mode
-                    timeout=10,               # таймаут установки коннекта (TCP/login) — не виснуть на полумёртвом PgBouncer
+                    timeout=10,               # тайм-аут установки коннекта (TCP/login) — не виснуть на полумёртвом PgBouncer
                     command_timeout=self.command_timeout,
                     init=self._init,
                 ))
@@ -291,7 +291,7 @@ class BaseDatabase:
         return self._pools.get(db) is not None
 
     def acquire(self, db: str = "program", timeout: int = _ACQUIRE_TIMEOUT):
-        """Соединение из пула с таймаутом ожидания свободного коннекта (не зависать, если пул
+        """Соединение из пула с тайм-аутом ожидания свободного коннекта (не зависать, если пул
         деградировал/исчерпан). Для прямых fetch ВНЕ SQL API — например ИИ-боты со своими
         запросами. Возвращает PoolAcquireContext (async with).
 
@@ -377,8 +377,8 @@ class BaseDatabase:
                     self._recovery_error_logged.discard(db)
                     return res
             except (TimeoutError, asyncio.TimeoutError) as error:
-                # До кортежа ниже: TimeoutError — подкласс OSError. Таймаут ПОДЪЁМА пула — как обрыв
-                # (повтор, пересоздание). Таймаут ожидания соединения (_ACQUIRE_TIMEOUT) или самого
+                # До кортежа ниже: TimeoutError — подкласс OSError. Тайм-аут ПОДЪЁМА пула — как обрыв
+                # (повтор, пересоздание). Тайм-аут ожидания соединения (_ACQUIRE_TIMEOUT) или самого
                 # запроса (command_timeout) — отказ сразу: повтор выполнил бы тот же медленный запрос
                 # ещё раз (нагрузка ×retries, двойное применение у процедур с записью), а занятый пул
                 # не сломан — пересоздание оборвало бы чужие запросы (0.8.1; проверка BinoAlpha 29-09, п.1.4).
